@@ -1,3 +1,5 @@
+import hashlib
+from typing import Iterable
 import pandas as pd
 
 # TODO make it general
@@ -20,3 +22,13 @@ def tsv_to_csv():
             # After the first chunk, do not write the header
             write_header = False
 
+
+
+def hasher(iterator: Iterable) -> str:
+    """
+    Hashes the elements of an iterator in a deterministic way.
+    """
+    iterator_list = list(iterator)
+    iterator_list.sort()
+    iterator_str = str(iterator_list)
+    return hashlib.md5(iterator_str.encode()).hexdigest()
