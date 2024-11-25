@@ -355,13 +355,13 @@ class MGnifyData:
 
                 # Check whether we should get assembly id or run id
                 # The hope is that first analysis will be the same as the other ones. We'll see after using this function a lot
-                if analyses[0]["relationships"]["run"] is None:
-                    print("No run id for this analysis")
+                if analyses[0]["relationships"]["run"]["data"] is None:
                     what_id = "assembly"
                 else:
                     what_id = "run"
 
                 for a in analyses:
+                    print(a)
                     run_id = a["relationships"][what_id]["data"]["id"]
                     result_dict[run_id] = a["relationships"]["sample"]["data"]["id"]
                 
@@ -488,7 +488,7 @@ class MGnifyData:
         metadata = metadata.join(pd.DataFrame(new_columns))
         
         if "GO" in summary_link or "InterPro" in summary_link:  # TODO make this optional
-            summary = summary.droplevel(["GO", "category"])
+            summary = summary.droplevel(["description", "category"])
         summary = summary.T
         metadata = metadata.T
 
