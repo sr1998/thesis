@@ -86,7 +86,7 @@ class MGnifyData:
         Get the most recent link from a list of download links based on the pipeline version in the link.
         """
         # Get the version of each link
-        versions = {study_id: max([float(link.split("/")[-3]) for link in study_links]) for study_id, study_links in links.items() if study_links and not print(study_links)}
+        versions = {study_id: max([float(link.split("/")[-3]) for link in study_links]) for study_id, study_links in links.items() if study_links}
         # Get the most recent link for each study
         most_recent_links = {study_id: [link for link in study_links if float(link.split("/")[-3]) == versions[study_id]][:1] for study_id, study_links in links.items() if study_links}
         return most_recent_links
@@ -174,7 +174,6 @@ class MGnifyData:
 
             # Load existing progress if available and still valid
             result = checkpoint_data.get("result", {})
-            print("cached:\n",result)
             processed_ids = set(result.keys())
 
             # Filter out already processed studies
