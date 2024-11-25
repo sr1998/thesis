@@ -361,7 +361,6 @@ class MGnifyData:
                     what_id = "run"
 
                 for a in analyses:
-                    print(a)
                     run_id = a["relationships"][what_id]["data"]["id"]
                     result_dict[run_id] = a["relationships"]["sample"]["data"]["id"]
                 
