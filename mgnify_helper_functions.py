@@ -66,7 +66,7 @@ class MGnifyData:
         if os.path.exists(file_path):
             with open(file_path, "r") as file:
                 checkpoint = json.load(file)
-                # Check if the cache is within the last 24 hours
+                # C.heck if the cache is within the last 24 hours
                 last_saved_time = datetime.fromisoformat(checkpoint.get("timestamp"))
                 if datetime.now() - last_saved_time < timedelta(hours=time_threshold):
                     return {k: v for k, v in checkpoint.items() if k != "timestamp"}
@@ -391,22 +391,20 @@ class MGnifyData:
             url = next_page or f"{self.base_api}/studies/{study_id}/samples?fields[samples]=id,biosample,latitude,longitude,species,sample_metadata&page_size={page_size}&page=1"
 
             while url:
-                biosamples_ids = {}
-                response = session.get(url)
-                if response.status_code != 200: # TODO remove if this function never gives error
-                    print(f"Failed to get metadata for {url}\n. Status code: {response.status_code}")
-                    break
-                response = response.json()
+                response = session.get(url).json()
+                
                 samples = response["data"]
                 samples = [sample for sample in samples if sample["id"] not in metadata]
+
                 additional_metadata = {}
+                biosamples_ids = {}
                 for sample in samples:
                     attributes = sample.get("attributes", {})
                     if "biosample" in attributes:
                         biosamples_ids[sample["id"]] = attributes["biosample"]
 
                     # get mgnify metadata
-                    additional_metadata[sample["id"]] = {d["key"]: d["value"] for d in attributes.get("sample_metadata", [])}
+                    additional_metadata[sample["id"]] = {d["key"]: d["value"] for d in attributes.get("sample-metadata", [])}
                     additional_metadata[sample["id"]]["biosample_id"] = attributes.get("biosample", None)
                     additional_metadata[sample["id"]]["sample_id"] = sample["id"]
                     
