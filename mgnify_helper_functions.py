@@ -8,6 +8,9 @@ from loguru import logger
 from matplotlib.axes import Axes
 import pandas as pd
 from requests import Session as requests_session
+import seaborn as sns
+import matplotlib.pyplot as plt
+import numpy as np
 
 from biosamples_helper_functions import get_metadata_of_samples
 from global_vars import HTTP_ADAPTER_FOR_REQUESTS
@@ -20,11 +23,6 @@ def plot_jaccard_similarities(dir_path: Union[str, Path], title: str, column_nam
     for file in os.listdir(dir_path):
         if file.endswith(file_ending):
             data[file] = pd.read_table(os.path.join(dir_path, file), usecols=[column_name])
-
-    # jaccard Similarity heatmap of description of different studies
-    import seaborn as sns
-    import matplotlib.pyplot as plt
-    import numpy as np
 
     # triangular jaccard similarity of descriptions
     jaccard_similarities = np.zeros((len(data), len(data)))
@@ -120,7 +118,7 @@ class MGnifyData:
         """
         cache_file = self.cache_folder / "study_accessions.json"
         cached_data = self.load_checkpoint(cache_file, time_threshold=cache_time_threshold)
-        study_accessions = cached_data.get("study_accessions", [])
+        study_accessions = cached_data.get("study_accessions", set())
         next_page = cached_data.get("next_page_url")
 
         with requests_session() as session:
@@ -134,7 +132,7 @@ class MGnifyData:
                 for study in studies:
                     biome = study["relationships"]["biomes"]["data"][0]["id"]
                     if desired_biomes is None or any(d in biome for d in desired_biomes):
-                        study_accessions.append(study["id"])
+                            study_accessions.add(study["id"])
 
                 url = response.get("links", {}).get("next")
                 self.save_checkpoint({"study_accessions": study_accessions, "next_page_url": url}, cache_file)
@@ -159,11 +157,14 @@ class MGnifyData:
             label_start_str (str): The start of the label of the analysis summary ("study-download") to download.
             desired_biomes (str): The biomes to filter the studies by. If None, all studies are returned.   # TODO not used yet
             max_workers (int): The maximum number of workers to use for concurrent requests.
-            study_ids (list): The list of study IDs to download the links for. If None, all studies are considered by getting their accessin id first.
+            study_ids (list): The list of study IDs to download the links for. If None, all studies are considered by getting their accession id first.
 
         Returns:
             dict: A dictionary of study IDs and the desired corresponding download links.
         """
+        if not study_ids:
+            study_ids = self.get_study_accessions(desired_biomes=desired_biomes)
+
         with requests_session() as session:
             session.mount("http://", HTTP_ADAPTER_FOR_REQUESTS)
             session.mount("https://", HTTP_ADAPTER_FOR_REQUESTS)
@@ -284,6 +285,7 @@ class MGnifyData:
         """
         Get secondary accessions for each study in the list of study_ids.
         """
+        # TODO caching is not used optimally
         chechpoint_file = os.path.join(self.cache_folder, f"primary_to_secondary_mappings.json")
         sec_accessions = self.load_checkpoint(chechpoint_file)["primary_to_secondary_mappings"]
 
@@ -307,6 +309,7 @@ class MGnifyData:
         """
         Get the primary accession for each secondary accession in the list of secondary_accessions.
         """
+        # TODO caching is not used optimally
         checkpoint_file = os.path.join(self.cache_folder, f"secondary_to_primary_mappings.json")
         primary_accessions = self.load_checkpoint(checkpoint_file)["secondary_to_primary_mappings"]
 
@@ -348,13 +351,6 @@ class MGnifyData:
             url = next_page or f"{self.base_api}/studies/{study_id}/analyses?page_size={page_size}&page=1&fields[analysis-jobs]=id,assembly,run,sample"
 
             while url:
-                import re
-                match = re.search(r"[&?]page=(\d+)", url)
-                page_number = int(match.group(1))
-                if page_number == 4:
-                    break
-
-
                 response = session.get(url).json()
                 analyses = response["data"]
 
@@ -443,28 +439,51 @@ class MGnifyData:
 
         return metadata
     
-    def combine_metadata_with_corresponding_study_summary(self, study_id: str, summary_link: str, cache_time_threshold=24*7*365*10) -> pd.DataFrame:
+    def combine_metadata_with_corresponding_study_summary(self,
+                                                          study_id: str, 
+                                                          summary_link: str,
+                                                          metadata_features: Optional[List[str]] = None,
+                                                          join_type: str = "inner",
+                                                          cache_time_threshold=24*7*365*10) -> pd.DataFrame:
         """
         Combine the metadata of a study with the corresponding study summary
+
+        Args:
+            study_id (str): The MGnify study ID to combine the metadata with the summary for.
+            summary_link (str): The link to the summary data of the study.
+            metadata_features (list): The metadata features to include in the combined data.
+            join_type (str): The type of join to use when combining the metadata with the summary.
+            cache_time_threshold (int): The number of hours the previous cache is valid for.
         """
         # TODO not finished as we may not even want this. One reason can be that not all samples in the summary are in the metadata and so our dataset will 
         # be either incomplete or we need to remove some samples from the summary reducing the size of the dataset
+
+        # TODO We may want to drop some samples in metadata if they don't have a desired feature (e.g. Health state);
+        # and based on join_type, this may reduce the summary data size too.
 
         cache_file = os.path.join(self.cache_folder, f"combined_data_{study_id}.csv")
         if os.path.exists(cache_file):
             return pd.read_csv(cache_file)
 
+        # Get and filter metadata
         metadata = self.get_metadata_for_study(study_id)
+        if metadata_features:
+            metadata = metadata.loc[metadata_features]
+
+        # Download summary if not downloaded yet
+        self.download_summary_for_studies({study_id: [summary_link]})
         summary_file_name = summary_link.split("/")[-1]
         summary = pd.read_table(os.path.join(self.cache_folder, summary_file_name))
 
-        assembly_id_to_sample_id = self.get_assembly_id_to_sample_id_dict(study_id)
+        run_id_to_sample_id = self.get_run_id_to_sample_id_dict(study_id)
 
+        # Change sample id to run id in metadata
         column_mapper = {}
-        for key, value in assembly_id_to_sample_id.items():
+        for key, value in run_id_to_sample_id.items():
             if value not in column_mapper:
                 column_mapper[value] = []
             column_mapper[value].append(key)
+
         new_columns = {new_name: metadata[old_name] for old_name, new_names in column_mapper.items() for new_name in new_names}
         metadata = metadata.drop(columns=list(column_mapper.keys()))
         metadata = metadata.join(pd.DataFrame(new_columns))
@@ -474,7 +493,10 @@ class MGnifyData:
         summary = summary.T
         metadata = metadata.T
 
-        # combined_data = summary.join(metadata, how="left") # outer or left or inner? Which one do we want
+        combined_data = summary.join(metadata, how=join_type)   # rows are samples, columns are features
+        combined_data.to_csv(cache_file)
+
+        return combined_data
 
         
 
