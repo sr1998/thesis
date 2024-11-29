@@ -6,7 +6,7 @@ from global_vars import HTTP_ADAPTER_FOR_REQUESTS
 
 BASE_API_URL = "https://www.ebi.ac.uk/biosamples"
 
-@logger.catch
+@logger.catch(reraise=True, onerror=lambda _: logger.error("An error occurred while getting the metadata of the samples from the BioSamples."))
 def get_metadata_of_samples(ids: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
     """
     Get the metadata of a list of samples from the BioSamples.
@@ -24,10 +24,7 @@ def get_metadata_of_samples(ids: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
         biosample_session.mount("https://", HTTP_ADAPTER_FOR_REQUESTS)
 
         for sample_id, biosmaple_id in ids.items():
-            try:
-                response = biosample_session.get(f"{BASE_API_URL}/samples/{biosmaple_id}", timeout=10)
-            except:
-                breakpoint()
+            response = biosample_session.get(f"{BASE_API_URL}/samples/{biosmaple_id}", timeout=10)
             characteristics = response.json().get("characteristics", {})
             metadata = {x + "__biosamples": characteristics[x][0]["text"] for x in characteristics if characteristics[x][0].get("tag", "") == "attribute"} 
             to_return[sample_id] = metadata

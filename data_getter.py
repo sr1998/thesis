@@ -1,14 +1,24 @@
 from pathlib import Path
 from typing import List, Optional, Union
-from loguru import logger
 from os.path import join as os_path_join
+import fire
 
 from global_vars import BASE_DIR
 from mgnify_helper_functions import MGnifyData
 
 
-def get_mgnify_data(study_download_label_start: str, study_accessions: Optional[List[str]] = None, biomes_desired: Optional[List[str]] = None,
-                    download_metadata: bool = False, use_metadata: bool = False, base_data_dir: Union[str, Path] = os_path_join(BASE_DIR, "data")) -> None:    
+def get_mgnify_data(study_download_label_start: str,
+                    study_accessions: Optional[List[str]] = None,
+                    biomes_desired: Optional[List[str]] = None,
+                    download_metadata: bool = False,
+                    base_data_dir: Union[str, Path] = os_path_join(BASE_DIR, "data")
+                    ) -> None:  
+    """
+    Function to download and if desired merge data and metadata and save it in the data directory
+    
+    """  
+    # TODO - make join type parametrized
+    
     # move to ml pipeline
     # train_test_split = config.get("train_test_split", [0.8, 0.2])
     # cross_val_k = config.get("cross_val_k", False)
@@ -29,14 +39,37 @@ def get_mgnify_data(study_download_label_start: str, study_accessions: Optional[
     if download_metadata:
         mgnify.download_metadata_for_studies(list(download_links.keys()))
 
-    # combining metadata and summary data
-    if use_metadata:
-        for study, summary_link in download_links.items():
-            mgnify.combine_metadata_with_corresponding_study_summary(study, summary_link)
-
 
 def main():
-    get_mgnify_data("Complete GO", ["MGYS00005628"], None, download_metadata=True, base_data_dir="data")
+    fire.Fire(get_mgnify_data)
+    # # None if all studies desired; if provided, only the summaries of those studies are downloaded
+    # # if studies are given, they have to contain the desired summary given by study_download_label_start
+    # study_accessions = "[..."]
+
+    # # indicates what summary file to download for the studies
+    # # possible values:
+    #     # - Complete GO
+    #     # - GO slim
+    #     # - Phylum level (this results in downloading all possibilities, e.g. SSU, LSU, ...)
+    #     # - Phylum level taxonomies SSU
+    #     # - Taxonomic assignments SSU
+    #     # - InterPro
+    #     # - Taxonomic diversity metrics SSU
+    #     # ... (see MGnify API)
+    # study_download_label_start = "Taxonomic assignments SSU"
+
+    # # The biome to get the studies for.
+    # # None if all studies are desired
+    # # The strings can also just be a part of the biome name.
+    # biomes_desired = "..."
+
+    # # Whether to download metadata for the studies
+    # download_metadata =  True
+
+    # # relative path of parent data directory from the root of the project
+    # base_data_dir = "data"
+
+    # get_mgnify_data(study_download_label_start=study_download_label_start, study_accessions=study_accessions, biomes_desired=biomes_desired, download_metadata=True, base_data_dir="data")
 
 if __name__ == "__main__":
     main()

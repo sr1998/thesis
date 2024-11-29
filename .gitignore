@@ -1,6 +1,7 @@
 data/
 .thesis_env/
 manually_obtained_data/
+random_tests/longitudinal checks (not fully done)
 
 
 # Byte-compiled / optimized / DLL files
