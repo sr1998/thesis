@@ -14,7 +14,7 @@ import numpy as np
 
 from biosamples_helper_functions import get_metadata_of_samples
 from global_vars import HTTP_ADAPTER_FOR_REQUESTS, TIMEOUT, PAGE_SIZE
-from helper_function import hasher
+from helper_function import config_session, hasher
                              
 
 def plot_jaccard_similarities(dir_path: Union[str, Path], title: str, column_name: str, biome_dict: Optional[Dict] = None, file_ending: str = ".tsv", axis: Optional[Axes] = None):
@@ -59,13 +59,7 @@ class MGnifyData:
         self.cache_folder = Path(cache_folder)
         self.base_api = "https://www.ebi.ac.uk/metagenomics/api/latest"
         # Make some urls sorted, e.g. by study size
-        # make these global: &page_size={page_size}&page=1"
-
-    def _config_session(self, session: requests_session):
-        session.mount("http://", HTTP_ADAPTER_FOR_REQUESTS)
-        session.mount("https://", HTTP_ADAPTER_FOR_REQUESTS)
-        session.headers.update({'Connection': 'keep-alive', "User-Agent": "Mozilla/5.0 (X11; CrOS x86_64 12871.102.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.141 Safari/537.36"})
-            
+        # make these global: &page_size={page_size}&page=1"            
 
     def load_checkpoint(self, file_path: Union[str, Path], time_threshold: int = 24):
         """
@@ -137,7 +131,7 @@ class MGnifyData:
         url = cached_data.get("next_page_url", start_url)
 
         with requests_session() as session:
-            self._config_session(session)
+            config_session(session)
 
             while url:
                 logger.info(f"Getting studies from {url}")
@@ -193,8 +187,8 @@ class MGnifyData:
         with requests_session() as session:
             HTTP_ADAPTER_FOR_REQUESTS.pool_maxsize = num_workers * 5
             HTTP_ADAPTER_FOR_REQUESTS.pool_connections = num_workers * 5
+            config_session(session)
             try:
-                self._config_session(session)
                 # for study_id in study_ids_to_process:
                 #     logger.info(f"Getting download links for study {study_id}.")
                 #     result.update(self._get_download_urls_for_label_with_start(session, study_id, label_start_str))
@@ -225,7 +219,7 @@ class MGnifyData:
                 # Reset the pool size to default
                 HTTP_ADAPTER_FOR_REQUESTS.pool_maxsize = 10
                 HTTP_ADAPTER_FOR_REQUESTS.pool_connections = 10
-        logger.success(f"Found {len(result)} studies with desired downloads.")
+        logger.success(f"Analyzed {len(result)} studies for desired downloads.")
         # Final checkpoint save to capture any remaining progress
         self.save_checkpoint({"result": result}, checkpoint_file)
 
@@ -243,8 +237,7 @@ class MGnifyData:
             None
         """
         with requests_session() as session:
-            session.mount("http://", HTTP_ADAPTER_FOR_REQUESTS)
-            session.mount("https://", HTTP_ADAPTER_FOR_REQUESTS)
+            config_session(session)
 
             for study_id, download_links in download_links.items():
                 logger.info(f"Downloading summaries for study {study_id}.")
@@ -290,7 +283,7 @@ class MGnifyData:
         study_sizes = checkpoint.get("study_sizes", {})
         print(url)
         with requests_session() as session:
-            self._config_session(session)
+            config_session(session)
             
             while url:
                 studies = session.get(url, timeout=TIMEOUT).json()
@@ -322,13 +315,12 @@ class MGnifyData:
         """
         # TODO caching is not used optimally
         chechpoint_file = os.path.join(self.cache_folder, f"primary_to_secondary_mappings.json")
-        sec_accessions = self.load_checkpoint(chechpoint_file)["primary_to_secondary_mappings"]
+        sec_accessions = self.load_checkpoint(chechpoint_file).get("primary_to_secondary_mappings", {})
 
         url = "{self.base_api}/studies/{}?fields[studies]=accession,secondary_accession"
 
-        with requests_session(self.base_api) as session:
-            session.mount("http://", HTTP_ADAPTER_FOR_REQUESTS)
-            session.mount("https://", HTTP_ADAPTER_FOR_REQUESTS)
+        with requests_session() as session:
+            config_session(session)
 
             for primary_accession in primary_study_accessions:
                 if primary_accession not in sec_accessions:
@@ -348,13 +340,12 @@ class MGnifyData:
         """
         # TODO caching is not used optimally
         checkpoint_file = os.path.join(self.cache_folder, f"secondary_to_primary_mappings.json")
-        primary_accessions = self.load_checkpoint(checkpoint_file)["secondary_to_primary_mappings"]
+        primary_accessions = self.load_checkpoint(checkpoint_file).get("secondary_to_primary_mappings", {})
 
         url = "{self.base_api}/studies/{}?fields[studies]=accession,secondary_accession"
 
-        with requests_session(self.base_api) as session:
-            session.mount("http://", HTTP_ADAPTER_FOR_REQUESTS)
-            session.mount("https://", HTTP_ADAPTER_FOR_REQUESTS)
+        with requests_session() as session:
+            config_session(session)
 
             for secondary_accession in secondary_study_accessions:
                 if secondary_accession not in primary_accessions:
@@ -389,8 +380,7 @@ class MGnifyData:
         url = cached_data.get("next_page_url", start_url)
 
         with requests_session() as session:
-            session.mount("http://", HTTP_ADAPTER_FOR_REQUESTS)
-            session.mount("https://", HTTP_ADAPTER_FOR_REQUESTS)
+            config_session(session)
 
             while url:
                 response = session.get(url).json()
@@ -414,30 +404,48 @@ class MGnifyData:
         logger.success(f"Found {len(result_dict)} run ID to sample ID pairs for study {study_id}.")
         return result_dict
 
-    def download_metadata_for_studies(self, study_ids: List[str], page_size: int = PAGE_SIZE, cache_time_threshold=24*7*365*10) -> None:
+    def download_metadata_for_studies(self, study_ids: List[str], page_size: int = PAGE_SIZE, n_samples: int = None, cache_time_threshold=24*7*365*10) -> None:
         """
         Download metadata for a list of studies. It includes the metadata from MGnify, BioSamples, and ELIXIR Contextual Data ClearingHouse
+
+        Args:
+            study_ids (list): The list of study IDs to get the metadata for.
+            page_size (int): The number of samples to retrieve per page. Max allowed: 250.
+            n_sample (int): The number of samples to retrieve. If None, all samples are retrieved. If given, at least this many samples are retrieved and the retrival is stopped asap.
+            cache_time_threshold (int): The number of hours the previous cache is valid for.
+
+        Returns:
+            None
         """
         for study_id in study_ids:
-            self.get_metadata_for_study(study_id, page_size, cache_time_threshold)
+            logger.info(f"Downloading metadata for study {study_id}.")
+            self.get_metadata_for_study(study_id, page_size, n_samples, cache_time_threshold)
 
     # TODO using csv for metadata is more efficient, but we need new caching mechanism (maybe flexible)
     @logger.catch(reraise=True, onerror=lambda _: logger.error("Failed to get metadata for a study."))
-    def get_metadata_for_study(self, study_id: str, page_size: int = PAGE_SIZE, cache_time_threshold=24*7*365*10) -> pd.DataFrame: # TODO add additinal functionality of getting the runs and change get_assembly_id_to_sample_id_dict based on this as input
+    def get_metadata_for_study(self, study_id: str, page_size: int = PAGE_SIZE, n_samples: int = None, cache_time_threshold=24*7*365*10) -> pd.DataFrame: # TODO add additinal functionality of getting the runs and change get_assembly_id_to_sample_id_dict based on this as input
         """
         Get metadata for a specific study. It includes the metadata from MGnify, BioSamples, and ELIXIR Contextual Data ClearingHouse
+
+        Args:
+            study_id (str): The MGnify study ID to get the metadata for.
+            page_size (int): The number of samples to retrieve per page. Max allowed: 250.
+            n_samples (int): The number of samples to retrieve. If None, all samples are retrieved. If given, at least this many samples are retrieved and the retrival is stopped asap.
+            cache_time_threshold (int): The number of hours the previous cache is valid for.
+
+        Returns:
+            pd.DataFrame: A DataFrame of metadata for the study. Rows are features, columns are samples (as in summary data).
         """
         start_url = f"{self.base_api}/studies/{study_id}/samples?fields[samples]=id,biosample,latitude,longitude,species,sample_metadata&page_size={page_size}&page=1"
 
         cache_file = self.cache_folder / f"{study_id}__metadata.json"
         cached_metadata = self.load_checkpoint(cache_file, time_threshold=cache_time_threshold)
         metadata = cached_metadata.get("metadata", {})
-        url = cached_metadata.get("next_page_url", start_url) 
+        url = cached_metadata.get("next_page_url", start_url)
 
         # get all sample ids for the study + mgnify metadata
         with requests_session() as session:
-            session.mount("http://", HTTP_ADAPTER_FOR_REQUESTS)
-            session.mount("https://", HTTP_ADAPTER_FOR_REQUESTS)
+            config_session(session)
 
             while url:
                 response = session.get(url).json()
@@ -473,9 +481,12 @@ class MGnifyData:
 
             
                 metadata.update(additional_metadata)
+                if n_samples and len(metadata) >= n_samples:
+                    break
 
                 # Get the next page URL (if available)
                 url = response.get("links", {}).get("next")
+                logger.info(f"Processed {len(metadata)} samples.")
 
                 # Save progress after each page
                 self.save_checkpoint({"metadata": metadata, "next_page_url": url}, cache_file)
@@ -555,6 +566,7 @@ def get_elixir_contextual_data_clearinghouse_metadata(sample_ids: List[str]) -> 
     base_api = "https://www.ebi.ac.uk/ena/clearinghouse/api"
     to_return = {}
     with requests_session() as session:
+        config_session(session)
         for id in sample_ids:
             metadata = session.get(f"{base_api}/curations/{id}").json().get("curations", [])
             metadata = {d["attributePost"] + "__elixir": d["valuePost"] for d in metadata}

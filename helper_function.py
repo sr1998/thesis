@@ -1,6 +1,9 @@
 import hashlib
 from typing import Iterable
 import pandas as pd
+from requests import Session as requests_session
+
+from global_vars import HTTP_ADAPTER_FOR_REQUESTS
 
 # TODO make it general
 def tsv_to_csv():
@@ -32,3 +35,9 @@ def hasher(iterator: Iterable) -> str:
     iterator_list.sort()
     iterator_str = str(iterator_list)
     return hashlib.md5(iterator_str.encode()).hexdigest()
+
+
+def config_session(session: requests_session):
+        session.mount("http://", HTTP_ADAPTER_FOR_REQUESTS)
+        session.mount("https://", HTTP_ADAPTER_FOR_REQUESTS)
+        session.headers.update({'Connection': 'keep-alive', "User-Agent": "Mozilla/5.0 (X11; CrOS x86_64 12871.102.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.141 Safari/537.36"})
