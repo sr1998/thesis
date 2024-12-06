@@ -1,0 +1,146 @@
+# leave out the parts that are not needed instead of giving empty values
+
+misc: 
+  base_data_dir: "data"  # relative path of parent data directory from the root of the project
+  wandb: true
+  run_name: ""  # for wandb
+  group: "" # for wandb
+  jobtype: "" # for wandb
+  verbose_pipeline: true
+  cache_pipeline_steps: true
+
+data:
+  # This will reuse cross-validation splits if this same experiment has been done before
+  load_from_cache_if_available: true
+
+  # Leave out if all studies desired; if provided, only the summaries of those studies are used
+  # if studies are given, they have to contain the desired summary given by study_download_label_start
+  study_accessions: "" # for now only one study is supported
+
+  # indicates what summary file to use for the studies
+  # possible values:
+    # - GO_abundances
+    # - GO-slim_abundances
+    # - phylum_taxonomy_abundances_SSU
+    # - taxonomy_abundances_SSU
+    # - IPR_abundances
+    # ... (see MGnify API for more)
+  summary_type: ""
+
+  # indicates what pipeline version to use
+  # possible values:
+    # - v3.0
+    # - v4.0
+    # - v4.1
+    # - v5.0
+  pipeline_version: ""
+
+  ## metadata columns to use; leave empty for none, or give value "all" for all columns
+  metdata_cols_to_use_as_features:
+    - ""
+    - ""
+    
+  # label column for classification
+  label_column: ""
+
+  # positive class label
+  positive_class_label: ""
+
+  # how to split the data
+  # current, only ShuffleSplit is supported
+  splitter:
+    type: "ShuffleSplit"
+    params:
+      n_splits: 1 # set to 1 if no cross-validation is desired
+      test_size: 0.2
+      random_state: 42  # providing random state is better for cross validation reproducibility; see https://scikit-learn.org/1.5/common_pitfalls#robustness-of-cross-validation-results
+
+# different preprocessing pipelines can be given, so GridSearch is done. "skip" can 
+# be give for skipping the preprocessing. Each setup is named, e.g. p1 and p2.
+preprocessing:
+  # the order is followed as it is given in each preprocessing setup.
+  p1:
+    # possible values: 
+    batch_effect_corrections:
+      - type: ""
+        params:
+          "": ""
+          "": ""
+      - type: ""
+        params:
+          "": ""
+          "": ""
+    # possible values:
+    imputations:
+      - type: ""
+        params:
+          "": ""
+          "": ""
+      - type: ""
+        params:
+          "": ""
+          "": ""
+    # possible values: total_sum_scaling, ...
+    # scikit-bio used partially
+    normalizations_and_transformations:
+      - type: ""
+        params:
+          "": ""
+          "": ""
+      - type: ""
+        params:
+          "": ""
+          "": ""
+    # possible values:
+    feature_space_change: 
+      type: ""
+      params:
+        "": ""
+        "": ""
+
+    # possible values: 
+    label_encoding:
+      type: ""
+      params:
+        "": ""
+        "": ""
+  p2: "skip" 
+
+model:
+  # different models can be given, so GridSearch is done. This is meant for hyperparameter tuning, 
+  # but the model can also be considered a hyperparameter. Most of the time though, we want to have
+  # the same model and only tune its hyperparameters and compare different models in the end on the
+  # The models can be named, e.g. m1 and m2.
+  m1:
+    # possible values:  RandomForestClassifier
+    type: ""
+    params:
+      - "": ""  # list can be given for a parameter to be tuned
+      - "": ""
+  test set.
+  m2: "skip" 
+
+  # hyperparameter tuning? leave out if not needed
+  hyperparameter_tuning:
+    # how to split the data for hyperparameter tuning
+    # only ShuffleSplit is supported for now
+    splitter:
+      type: "ShuffleSplit"
+      params:
+        n_splits: 5
+        test_size: 0.1
+        n_jobs: -1
+        # !!! do not provide random_state for hyperparameter tuning !!!
+    # possible values: RandomizedSearchCV, GridSearchCV
+    type: ""
+    params:
+      - "": ""
+      - "": ""
+    eval_metric: ""
+  # possible values: 
+  # maybe each needs also its own params (in that case separating from model is better)
+  performance_eval_metrics:
+    - ""
+    - ""
+
+

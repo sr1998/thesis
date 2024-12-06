@@ -1,6 +1,5 @@
 requests>=2.31.0
 pandas>=2.0.0
-jsonapi-client>=0.9.9
 tqdm>=4.49.0
 urllib3~=2.2.1
 scikit-learn
@@ -11,3 +10,11 @@ wandb
 loguru
 fire
 aiohttp
+lightgbm
+skorch
+plotly
+
+black
+isort
+pylint
+mypy
