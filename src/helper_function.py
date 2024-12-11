@@ -74,10 +74,10 @@ def df_str_for_loguru(df: pd.DataFrame) -> str:
     return "\n\t" + df_str.replace("\n", "\n\t")
 
 
-def create_pipeline(steps, config):
+def create_pipeline(steps: list[object], config: dict[str, object]) -> Pipeline:
     """Create a pipeline from the steps and config."""
     # Create a cache object if caching is enabled with default cache location
-    if config.get("cache_pipeline_steps", False):
+    if config.get("cache_pipeline_steps", True):
         cacher = Memory(
             location=get_run_dir_for_experiment(config) / "pipeline_cache", verbose=1
         )
@@ -109,6 +109,11 @@ def get_scores(
     """Calculate the scores for the predictions."""
     scores = {}
     y_n_unique = len(np.unique(y))
+
+    y_pred = model.predict_proba(X)
+    y_dec = model.decision_function(X)
+    y_pred = model.predict(X)
+
     for score_name, scorer in scoring.items():
         try:
             scoring_function = get_scorer(scorer)._score_func
@@ -116,13 +121,13 @@ def get_scores(
                 kwargs = scorer._kwargs if hasattr(scorer, "_kwargs") else {}
                 # Get kwargs available, e.g. {average="micro"} if scorer is not a string but a make_scorer object
                 if hasattr(model, "predict_proba"):
-                    y_model = model.predict_proba(X)
+                    y_model = y_pred
                     scoring_function._response_method = "predict_proba"
                 elif hasattr(model, "decision_function"):
-                    y_model = model.decision_function(X)
+                    y_model = y_dec
                     scoring_function._response_method = "decision_function"
                 else:
-                    y_model = model.predict(X)
+                    y_model = y_pred
                     scoring_function._response_method = "predict"
 
                 if y_n_unique == 2:
@@ -134,7 +139,7 @@ def get_scores(
                         y, y_model, **kwargs
                     )
             else:
-                y_pred = model.predict(X)
+                y_pred = y_pred
                 scores[train_or_test + "/" + score_name] = scoring_function(y, y_pred)
         except Exception as e:
             logger.error(f"Error calculating {score_name} for {train_or_test}: {e}")

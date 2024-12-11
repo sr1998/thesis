@@ -15,37 +15,6 @@ import numpy as np
 from src.biosamples_helper_functions import get_metadata_of_samples
 from src.global_vars import HTTP_ADAPTER_FOR_REQUESTS, TIMEOUT, PAGE_SIZE
 from src.helper_function import config_session, hasher
-                             
-
-def plot_jaccard_similarities(dir_path: Union[str, Path], title: str, column_name: str, biome_dict: Optional[Dict] = None, file_ending: str = ".tsv", axis: Optional[Axes] = None):
-    """ ... """
-    # get dataframe for each file in dir_path ending with file_ending and only column column_name
-    data = {}
-    for file in os.listdir(dir_path):
-        if file.endswith(file_ending):
-            data[file] = pd.read_table(os.path.join(dir_path, file), usecols=[column_name])
-
-    # triangular jaccard similarity of descriptions
-    jaccard_similarities = np.zeros((len(data), len(data)))
-    for i, (file1, df1) in enumerate(data.items()):
-        for j, (file2, df2) in enumerate(data.items()):
-            if i > j:
-                continue
-            descriptions1 = set(df1[column_name])
-            descriptions2 = set(df2[column_name])
-            jaccard_similarities[i, j] = len(descriptions1.intersection(descriptions2)) / len(descriptions1.union(descriptions2))
-
-    # plot heatmap
-    xticks = [file.split("_")[0] for file in data.keys()]
-    if biome_dict:
-        try:
-            biome_dict = {k: v.split(":")[-1] for k, v in biome_dict.items()}
-            xticks = [x + " (" + biome_dict[x] + ")" for x in xticks]
-        except KeyError:
-            print("Biome_dict not compatible with xticks")
-
-    sns.heatmap(jaccard_similarities, xticklabels=xticks, yticklabels=xticks, cmap="YlGnBu", annot=True, ax=axis)
-    plt.title(title)
 
 
 class MGnifyData:

@@ -13,8 +13,21 @@ aiohttp
 lightgbm
 skorch
 plotly
+matplotlib
+seaborn
+arfs
 
-black
-isort
-pylint
-mypy
+# eda
+umap-learn
+
+# SparCC
+dask[complete]
+numba
+h5py
+scipy
+
+
+# dev
+ruff
+nbformat
+pytest

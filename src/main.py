@@ -16,24 +16,22 @@ from src.helper_function import (
 )
 
 
-def get_data(base_data_dir: str, **kwargs) -> tuple[pd.DataFrame, pd.DataFrame]:
-    study_accessions = kwargs.get("study_accessions", None)
-    summary_type = kwargs.get("summary_type", None)
-    pipeline = kwargs.get("pipeline_version", None)
-    metdata_cols_to_use_as_features = kwargs.get("metdata_cols_to_use_as_features", [])
-    label_col = kwargs.get("label_col", None)
-
-    assert summary_type is not None, logger.error("Summary type must be provided")
-    assert pipeline is not None, logger.error("Pipeline version must be provided")
-
-    if not isinstance(study_accessions, list):
+def get_data(
+    base_data_dir: str,
+    study_accessions: str | list[str] | None,
+    summary_type: str,
+    pipeline_version: str,
+    label_col: str,
+    metdata_cols_to_use_as_features: list[str] = [],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if not isinstance(study_accessions, list) and study_accessions is not None:
         study_accessions = [study_accessions]
 
     data, labels = load_data(
         base_data_dir,
         study_accessions,
         summary_type,
-        pipeline,
+        pipeline_version,
         metdata_cols_to_use_as_features,
         label_col,
     )
@@ -93,25 +91,68 @@ def get_data(base_data_dir: str, **kwargs) -> tuple[pd.DataFrame, pd.DataFrame]:
 # ) -> Pipeline:
 
 
-def main(config_script: str):
+def main(
+    config_script: str,
+    *,
+    study_accessions: str | list[str],
+    summary_type: str,
+    pipeline_version: str,
+    label_col: str,
+    positive_class_label: str,
+    metdata_cols_to_use_as_features: list[str] = [],
+    load_from_cache_if_available: bool = True,
+    wandb_run_name: str | None = None,
+):
+    """Run the pipeline for the given study accessions and config script.
+
+    Args:
+        config_script: The path to the config script
+        study_accessions: Leave out if all studies desired; if provided, only the summaries of
+            those studies are used if studies are given, they have to contain the desired
+            summary given by study download_label_start. For now only one study is supported.
+        summary_type: Indicates what summary file to use for the studies.
+            Possible values:
+                - GO_abundances
+                - GO-slim_abundances
+                - phylum_taxonomy_abundances_SSU
+                - taxonomy_abundances_SSU
+                - IPR_abundances
+                - ... (see MGnify API for more)
+        pipeline_version: Indicates what pipeline version to use.
+            Possible values:
+                - v3.0
+                - v4.0
+                - v4.1
+                - v5.0
+        label_col: Label column for classification.
+        positive_class_label: Positive class label to be used in label encoding.
+        metdata_cols_to_use_as_features: Metadata columns to use; leave empty for none, or give value "all" for all columns.
+        load_from_cache_if_available: This will reuse cross-validation splits if this same experiment has been done before.
+            Note: This is not implemented yet.
+        wandb_run_name: The name of the wandb run. Defaults to None.
+
+    Returns:
+        None
+
+    """
     # can we change SLURM stdout and stderr file?
     config_module = import_module(config_script)
     setup = config_module.get_setup()
     (
         misc_config,
-        data_load_config,
         outer_cv_config,
         inner_cv_config,
         standard_pipeline,
         label_preprocessor,
-        tuning_grid,
         scoring,
         best_fit_scorer,
+        tuning_grid,
     ) = setup.values()
 
     # get misc config parameters
     use_wandb = misc_config["wandb"]
     wandb_params = misc_config["wandb_params"]
+    wandb_params["name"] = wandb_run_name or study_accessions
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
     # Set up file logging
@@ -119,10 +160,10 @@ def main(config_script: str):
     logger.add(logger_path, colorize=True, level="DEBUG")
 
     wandb_base_tags = [
-        "s_" + data_load_config["summary_type"],
-        "p_" + data_load_config["pipeline_version"],
+        "s_" + summary_type,
+        "p_" + pipeline_version,
         "m_" + tuning_grid[0]["model"][0].__class__.__name__,
-        "label_" + data_load_config["label_col"],
+        "label_" + label_col,
     ]
 
     # Initialize wandb if enabled
@@ -143,10 +184,17 @@ def main(config_script: str):
         )
 
     # Load data
-    data, labels = get_data(BASE_DATA_DIR, **data_load_config)
+    data, labels = get_data(
+        BASE_DATA_DIR,
+        study_accessions,
+        summary_type,
+        pipeline_version,
+        label_col,
+        metdata_cols_to_use_as_features,
+    )
 
     # Encode labels. Make sure the positive class is labeled as 1
-    positive_class_label = data_load_config["positive_class_label"]
+
     label_preprocessor.fit(labels)
     classes = list(label_preprocessor.classes_)
     if positive_class_label in classes:
@@ -198,14 +246,6 @@ def main(config_script: str):
         )
 
         tuner = tuner.fit(X_train, y_train)
-
-        # tuner_cv_result = tuner.cv_results_
-        # pd.options.display.max_columns = None
-        # pd.options.display.max_rows = None
-        # pd.options.display.width = None
-        # pd.options.display.max_colwidth = None
-        # logger.success(df_str_for_loguru(pd.DataFrame(tuner.cv_results_).head(10)))
-        # exit(1)
 
         table = wandb.Table(dataframe=pd.DataFrame(tuner.cv_results_).astype(str))
         wandb.log({f"Hyperparam tuning scores @ outer cv split {i}": table}, step=i)

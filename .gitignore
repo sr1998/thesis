@@ -1,9 +1,12 @@
 data/
-.thesis_env/
+.thesis_venv/
+.thesis_env_old/
 manually_obtained_data/
 random_tests/longitudinal checks (not fully done)
 wandb/
 runs/
+joblib/
+*.code-workspace
 
 
 # Byte-compiled / optimized / DLL files

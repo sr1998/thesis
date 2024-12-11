@@ -13,42 +13,10 @@ def get_setup():
         "wandb": True,  # whether to use wandb or not
         "wandb_params": {
             "project": "thesis_baselines",
-            "name": "...",  # dataset name can be useful here
             "group": "...",  # model name can be useful here
         },
         "verbose_pipeline": True,  # whether to print verbose output from the pipeline
         "cache_pipeline_steps": True,
-    }
-
-    # TODO Define the data load config. Here is a dummy example
-    data_load_config = {
-        # This will reuse cross-validation splits if this same experiment has been done before
-        "load_from_cache_if_available": True,  # TODO: implement this
-        # Leave out if all studies desired; if provided, only the summaries of those studies are used
-        # if studies are given, they have to contain the desired summary given by study_download_label_start
-        "study_accessions": "...",  # for now only one study is supported
-        # indicates what summary file to use for the studies
-        # possible values:
-        # - GO_abundances
-        # - GO-slim_abundances
-        # - phylum_taxonomy_abundances_SSU
-        # - taxonomy_abundances_SSU
-        # - IPR_abundances
-        # ... (see MGnify API for more)
-        "summary_type": "...",
-        # indicates what pipeline version to use
-        # possible values:
-        # - v3.0
-        # - v4.0
-        # - v4.1
-        # - v5.0
-        "pipeline_version": "...",
-        # metadata columns to use; leave empty for none, or give value "all" for all columns
-        "metdata_cols_to_use_as_features": [],
-        # label column for classification
-        "label_col": "...",
-        # positive class label
-        "positive_class_label": "...",
     }
 
     # TODO Define the cross-validation configurations
@@ -149,7 +117,6 @@ def get_setup():
 
     return {
         "misc_config": misc_config,
-        "data_load_config": data_load_config,
         "outer_cv_config": outer_cv_config,
         "inner_cv_config": inner_cv_config,
         "ml_pipeline": standard_pipeline,

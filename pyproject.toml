@@ -1,7 +1,14 @@
 [tool.ruff]
 line-length = 88
+exclude = ["run_configs/*"]
 [tool.ruff.lint]
 extend-select = ["I", "D"]
 exclude = ["W0511"]
 [tool.ruff.lint.pydocstyle]
 convention = "google"  # Accepts: "google", "numpy", or "pep257".
+ignore-decorators = ["D103"]   # Ignore missing docstring in public module.
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "."
+]
