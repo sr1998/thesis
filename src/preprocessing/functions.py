@@ -16,8 +16,8 @@ class NumpyReplace(TransformerMixin, BaseEstimator):
 
 
 def total_sum_scaling(data: np.ndarray | pd.DataFrame) -> np.ndarray:
-    """
-    Normalize the data by dividing each feature count of a sample by the total count of that sample.
+    """Normalize the data by dividing each feature count of a sample by the total count of that sample.
+    
     Args:
         data: The data to be normalized. Each row is a sample and each column is a feature.
     """

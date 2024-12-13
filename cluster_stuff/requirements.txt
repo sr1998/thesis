@@ -15,16 +15,17 @@ skorch
 plotly
 matplotlib
 seaborn
-arfs
+# arfs
+ray[tune]
 
-# eda
-umap-learn
+# # eda
+# umap-learn
 
-# SparCC
-dask[complete]
-numba
-h5py
-scipy
+# # SparCC
+# dask[complete]
+# numba
+# h5py
+# scipy
 
 
 # dev

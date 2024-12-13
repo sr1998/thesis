@@ -2,6 +2,7 @@ from arfs.feature_selection.lasso import LassoFeatureSelection
 from ray import tune
 from sklearn.calibration import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import SelectPercentile, mutual_info_classif
 from sklearn.metrics import (
     average_precision_score,
     get_scorer,
@@ -12,11 +13,7 @@ from sklearn.model_selection import ShuffleSplit
 from sklearn.pipeline import FunctionTransformer
 from sklearn.preprocessing import Normalizer
 
-from run_configs.predefined_hyp_param_search_space import (
-    get_rf_search_space,
-    select_percentile_search_space,
-    umap_search_space,
-)
+from src.helper_function import create_pipeline
 from src.preprocessing.functions import NumpyReplace, total_sum_scaling
 from src.preprocessing.micronorm import GMPR_normalize
 
@@ -47,27 +44,23 @@ def get_setup():
         },  # don't provide random_state, as we want to change it per outer fold
     }
 
-    # preprocessor_pipeline = create_pipeline(
-    #     [
-    #         (
-    #             "batch_effect_corrections_and_imputations",
-    #             "passthrough",
-    #         ),  # Together as imputation may be needed after/before batch effect correction depending on whether can handle sparse data or not
-    #         ("normalizations_and_transformations", "passthrough"),
-    #         ("feature_space_change", "passthrough"),
-    #     ],
-    #     misc_config,
-    # )
+    preprocessor_pipeline = create_pipeline(
+        [
+            ("normalizations_and_transformations", "pass_through"),
+            ("feature_space_change", "passthrough"),
+        ],
+        misc_config,
+    )
 
     label_preprocessor = LabelEncoder()
 
-    # standard_pipeline = create_pipeline(
-    #     [
-    #         ("preprocessor", preprocessor_pipeline),
-    #         ("model", "passthrough"),
-    #     ],
-    #     misc_config,
-    # )
+    standard_pipeline = create_pipeline(
+        [
+            ("preprocessor", preprocessor_pipeline),
+            ("model", RandomForestClassifier()),
+        ],
+        misc_config,
+    )
 
     score_functions = {
         "accuracy": "accuracy",
@@ -96,75 +89,45 @@ def get_setup():
         "recall_weighted": "recall_weighted",
     }
     best_fit_scorer = "f1_weighted"
+    tuning_mode = "max"  # "max" or "min"
 
     # TODO Define the tuning grid. Here is a dummy example
     tuning_grid = [
         {
-            "batch_effect_corrections_and_imputations": tune.choice(
-                [
-                    "passthrough",
-                    NumpyReplace(),
-                ]
-            ),
-            "preprocessor__normalizations_and_transformations": tune.sample_from(
-                lambda spec: tune.choice(
-                    [
-                        Normalizer(norm="l1"),
-                        Normalizer(norm="l2"),
-                        FunctionTransformer(
-                            total_sum_scaling,
-                            validate=True,
-                            feature_names_out="one-to-one",
+            "preprocessor__normalizations_and_transformations": Normalizer(norm="l1"),
+            "preprocessor__feature_space_change": tune.choice(
+                "passthrough",
+                tune.sample_from(
+                    lambda spec: SelectPercentile(
+                        mutual_info_classif(
+                            discrete_features=False, n_neighbors=tune.randint(2, 100)
                         ),
-                        "passthrough",
-                    ]
-                )
-                if spec.config["batch_effect_corrections_and_imputations"]
-                != "passthrough"
-                else tune.choice(
-                    [
-                        Normalizer(norm="l1"),
-                        Normalizer(norm="l2"),
-                        FunctionTransformer(
-                            total_sum_scaling,
-                            validate=True,
-                            feature_names_out="one-to-one",
-                        ),
-                        FunctionTransformer(
-                            GMPR_normalize,
-                            validate=True,
-                            feature_names_out="one-to-one",
-                        ),
-                        "passthrough",
-                    ]
-                )
+                        percentile=tune.randint(0, 100),
+                    )
+                ),
             ),
-            "preprocessor__feature_space_change": tune.sample_from(
-                lambda spec: tune.choice(
-                    [
-                        LassoFeatureSelection(n_jobs=1),
-                        umap_search_space,
-                        select_percentile_search_space,
-                    ]
-                )
+            "model__n_estimators": tune.randint(
+                10, 500
+            ),  # Replace get_rf_search_space logic
+            "model__max_depth": tune.choice([None, tune.randint(10, 200)]),
+            "model__criterion": tune.choice(["gini", "entropy"]),
+            "model__class_weight": tune.choice(["balanced", None]),
+            "model__oob_score": tune.choice(
+                [False, get_scorer(best_fit_scorer)._score_func]
             ),
-            **get_rf_search_space(best_fit_scorer),
-        },
+        }
     ]
-
-    model = RandomForestClassifier()
-
-    tuning_method = ...
+    tuning_num_samples = 100
 
     return {
         "misc_config": misc_config,
         "outer_cv_config": outer_cv_config,
         "inner_cv_config": inner_cv_config,
-        # "standard_pipeline": standard_pipeline,
+        "standard_pipeline": standard_pipeline,
         "label_preprocessor": label_preprocessor,
         "scoring": score_functions,
         "best_fit_scorer": best_fit_scorer,
+        "tuning_mode": tuning_mode,
         "tuning_grid": tuning_grid,
-        "model": model,
-        "tuner": tuning_method,
+        "tuning_num_samples": tuning_num_samples
     }

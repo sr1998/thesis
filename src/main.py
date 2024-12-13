@@ -5,12 +5,19 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 from numpy.random import RandomState
-from sklearn.model_selection import GridSearchCV
+from ray import tune
+from ray.train import RunConfig
+from ray.tune.execution.placement_groups import PlacementGroupFactory
+from ray.tune.search import ConcurrencyLimiter
+from ray.tune.search.optuna import OptunaSearch
+from ray.tune.stopper import ExperimentPlateauStopper
+from sklearn.model_selection import cross_validate
 
 import wandb
 from src.data.dataloader import load_data
-from src.global_vars import BASE_DATA_DIR
+from src.global_vars import BASE_DATA_DIR, BASE_DIR
 from src.helper_function import (
+    create_pipeline_from_param_config,
     get_run_dir_for_experiment,
     get_scores,
 )
@@ -39,56 +46,45 @@ def get_data(
     return data, labels
 
 
-# def build_preprocessor_pipeline(
-#     cacher: Memory, *, verbose: bool = False, **kwargs
-# ) -> Pipeline:
-#     batch_correction_methods = kwargs.get("batch_correction_methods", [])
-#     imputations = kwargs.get("imputations", [])
-#     normalizations_and_transformations = kwargs.get(
-#         "normalizations_and_transformations", []
-#     )
-#     feature_space_changes = kwargs.get("feature_space_changes", [])
+def hyp_param_train_with_cv(
+    config, data, labels, cv, standard_pipeline, scoring, best_fit_scorer, outer_cv_step
+):
+    standard_pipeline.set_params(**config)
 
-#     # Create a pipeline for batch correction methods
-#     p = []
-#     for batch_corrector in batch_correction_methods:
-#         pass
-#     batch_correction_methods = Pipeline(p)
+    cross_val_results = cross_validate(
+        standard_pipeline,
+        data,
+        labels,
+        cv=cv,
+        scoring=scoring,
+        return_train_score=True,
+        n_jobs=cv.n_jobs,
+    )
 
-#     # Create a pipeline for imputation methods
-#     p = []
-#     for imputation in imputations:
-#         pass
-#     imputations = Pipeline(p)
+    cross_val_res_dict = {
+        **{
+            k.replace("train_", "train/"): v
+            for k, v in cross_val_results.items()
+            if "train" in k
+        },
+        **{
+            k.replace("test_", "val/"): v
+            for k, v in cross_val_results.items()
+            if "test" in k
+        },
+    }
 
-#     # Create a pipeline for normalization and transformation methods
-#     p = []
-#     for n_or_t in normalizations_and_transformations:
-#         if n_or_t["type"] == "total_sum_scaling":
-#             p.append((n_or_t, Normalizer(**n_or_t["params"])))
-#         elif n_or_t["type"] == "...":
-#             pass
-#     normalizations_and_transformations = Pipeline(p)
+    wandb.log(cross_val_res_dict, step=outer_cv_step)
 
-#     # Create a pipeline for feature space changes
-#     p = []
-#     for feature_space_change in feature_space_changes:
-#         pass
-#     feature_space_changes = Pipeline(p)
-
-#     return Pipeline(
-#         [
-#             ("batch_correction_methods", batch_correction_methods),
-#             ("imputations", imputations),
-#             ("normalizations_and_transformations", normalizations_and_transformations),
-#             ("feature_space_changes", feature_space_changes),
-#         ]
-#     )
-
-
-# def build_model_pipeline(
-#     cacher: Memory, *, verbose: bool = False, **kwargs
-# ) -> Pipeline:
+    tune.report(
+        {
+            **cross_val_res_dict,
+            "best_fit_metric": cross_val_results["test_" + best_fit_scorer].mean(),
+            "fit_times": cross_val_results["fit_time"],
+            "score_times": cross_val_results["score_time"],
+            "done": True,
+        }
+    )
 
 
 def main(
@@ -101,7 +97,7 @@ def main(
     positive_class_label: str,
     metdata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
-    wandb_run_name: str | None = None,
+    run_name: str | None = None,
 ):
     """Run the pipeline for the given study accessions and config script.
 
@@ -146,13 +142,14 @@ def main(
         label_preprocessor,
         scoring,
         best_fit_scorer,
+        tuning_mode,
         tuning_grid,
+        tuning_num_samples,
     ) = setup.values()
 
     # get misc config parameters
     use_wandb = misc_config["wandb"]
     wandb_params = misc_config["wandb_params"]
-    wandb_params["name"] = wandb_run_name or study_accessions
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
     # Set up file logging
@@ -169,6 +166,7 @@ def main(
     # Initialize wandb if enabled
     if use_wandb:
         wandb.init(
+            name=run_name,
             notes=str(setup),
             config=setup,
             **wandb_params,
@@ -176,6 +174,7 @@ def main(
         )
     else:
         wandb.init(
+            name=run_name,
             mode="disabled",
             notes=str(setup),
             config=setup,
@@ -208,16 +207,6 @@ def main(
             label_preprocessor.classes_ = np.array(classes)
     encoded_labels = label_preprocessor.transform(labels)
 
-    # nested_score = cross_validate(
-    #     tuner,
-    #     data,
-    #     encoded_labels,
-    #     cv=outer_cv,
-    #     scoring=score_functions,
-    #     return_train_score=True,
-    #     return_indices=True,
-    # )
-
     train_scores = []
     test_scores = []
 
@@ -234,23 +223,60 @@ def main(
         inner_cv = inner_cv_config["type"](
             **inner_cv_config["params"], random_state=random_state
         )
-        tuner = GridSearchCV(
-            estimator=standard_pipeline,
-            param_grid=tuning_grid,
+
+        partial_hyp_param_train_with_cv = tune.with_parameters(
+            hyp_param_train_with_cv,
+            data=X_train,
+            labels=y_train,
             cv=inner_cv,
+            standard_pipeline=standard_pipeline,
             scoring=scoring,
-            refit=best_fit_scorer,
-            # verbose=3,  # we are logging, so not necessary
-            n_jobs=-1,
-            return_train_score=True,
+            best_fit_scorer=best_fit_scorer,
+            outer_cv_step=i,
         )
 
-        tuner = tuner.fit(X_train, y_train)
+        trainable = tune.with_resources(
+            partial_hyp_param_train_with_cv, resources=PlacementGroupFactory([
+                {"CPU": 1, "GPU": 0}
+            ] * inner_cv_config["params"]["n_splits"])
+        )
 
-        table = wandb.Table(dataframe=pd.DataFrame(tuner.cv_results_).astype(str))
-        wandb.log({f"Hyperparam tuning scores @ outer cv split {i}": table}, step=i)
+        tuner = tune.Tuner(
+            trainable,
+            param_space=tuning_grid,
+            run_config=RunConfig(
+                name=run_name,
+                storage_path=str(BASE_DIR / "ray_results"),
+                stop=ExperimentPlateauStopper(
+                    metric="best_fit_metric", mode=tuning_mode, patience=3
+                ),
+            ),
+            tune_config=tune.TuneConfig(
+                search_alg=ConcurrencyLimiter(OptunaSearch(), max_concurrent=3),
+                metric="best_fit_metric",
+                mode=tuning_mode,
+                num_samples=tuning_num_samples,
+            ),
+        )
 
-        best_model = tuner.best_estimator_
+        # tuner = GridSearchCV(
+        #     standard_pipeline,
+        #     tuning_grid,
+        #     cv=inner_cv,
+        #     scoring=scoring,
+        #     refit=best_fit_scorer,
+        #     # verbose=3,  # we are logging, so not necessary
+        #     n_jobs=-1,
+        #     return_train_score=True,
+        # )
+
+        tuning_results = tuner.fit()
+
+        # table = wandb.Table(dataframe=pd.DataFrame(tuner.cv_results_).astype(str))
+        # wandb.log({f"Hyperparam tuning scores @ outer cv split {i}": table}, step=i)
+
+        best_config = tuning_results.get_best_model().config
+        best_model = standard_pipeline.set_params(**best_config)
         best_model.fit(X_train, y_train)
 
         train_outer_cv_score = get_scores(

@@ -9,7 +9,7 @@ from joblib import Memory
 from loguru import logger
 from requests import Session as requests_session
 from sklearn.base import BaseEstimator
-from sklearn.metrics import get_scorer, make_scorer
+from sklearn.metrics import get_scorer
 from sklearn.pipeline import Pipeline
 
 from src.global_vars import (

@@ -1,0 +1,11 @@
+name: __apptainer__
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - jupyterlab
+  - pip
+  - pip:
+    - -r requirements.txt
+
