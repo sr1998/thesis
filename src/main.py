@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 from numpy.random import RandomState
+import ray
 from ray import tune
 from ray.train import RunConfig
 from ray.tune.execution.placement_groups import PlacementGroupFactory
@@ -12,6 +13,8 @@ from ray.tune.search import ConcurrencyLimiter
 from ray.tune.search.optuna import OptunaSearch
 from ray.tune.stopper import ExperimentPlateauStopper
 from sklearn.model_selection import cross_validate
+import joblib
+from ray.util.joblib import register_ray
 
 import wandb
 from src.data.dataloader import load_data
@@ -51,28 +54,29 @@ def hyp_param_train_with_cv(
 ):
     standard_pipeline.set_params(**config)
 
-    cross_val_results = cross_validate(
-        standard_pipeline,
-        data,
-        labels,
-        cv=cv,
-        scoring=scoring,
-        return_train_score=True,
-        n_jobs=cv.n_jobs,
-    )
+    with joblib.parallel_config(backend='ray'):
+        cross_val_results = cross_validate(
+            standard_pipeline,
+            data,
+            labels,
+            cv=cv,
+            scoring=scoring,
+            return_train_score=True,
+            n_jobs=cv.n_jobs,
+        )
 
-    cross_val_res_dict = {
-        **{
-            k.replace("train_", "train/"): v
-            for k, v in cross_val_results.items()
-            if "train" in k
-        },
-        **{
-            k.replace("test_", "val/"): v
-            for k, v in cross_val_results.items()
-            if "test" in k
-        },
-    }
+        cross_val_res_dict = {
+            **{
+                k.replace("train_", "train/"): v
+                for k, v in cross_val_results.items()
+                if "train" in k
+            },
+            **{
+                k.replace("test_", "val/"): v
+                for k, v in cross_val_results.items()
+                if "test" in k
+            },
+        }
 
     wandb.log(cross_val_res_dict, step=outer_cv_step)
 
@@ -131,6 +135,9 @@ def main(
         None
 
     """
+    ray.init()
+    register_ray()
+
     # can we change SLURM stdout and stderr file?
     config_module = import_module(config_script)
     setup = config_module.get_setup()
@@ -155,6 +162,7 @@ def main(
     # Set up file logging
     logger_path = get_run_dir_for_experiment(misc_config) / "log.log"
     logger.add(logger_path, colorize=True, level="DEBUG")
+    logger.info("Starting with it all")
 
     wandb_base_tags = [
         "s_" + summary_type,
@@ -181,6 +189,7 @@ def main(
             **wandb_params,
             tags=wandb_base_tags,
         )
+    logger.success("wandb init done")
 
     # Load data
     data, labels = get_data(
@@ -191,6 +200,8 @@ def main(
         label_col,
         metdata_cols_to_use_as_features,
     )
+
+    logger.success("Data obtained")
 
     # Encode labels. Make sure the positive class is labeled as 1
 
@@ -211,6 +222,8 @@ def main(
     test_scores = []
 
     outer_cv = outer_cv_config["type"](**outer_cv_config["params"])
+
+    logger.info("Starting with outer cv")
 
     for i, (train_index, test_index) in enumerate(outer_cv.split(data, encoded_labels)):
         # outer cv data split

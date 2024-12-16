@@ -8,6 +8,10 @@ wandb/
 runs/
 joblib/
 *.code-workspace
+slurm-*.err
+slurm-*.out
+cluster_stuff/tmp/ray/
+*.sif
 
 
 # Byte-compiled / optimized / DLL files
