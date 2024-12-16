@@ -1,4 +1,5 @@
 data/
+!src/data/
 .thesis_venv/
 .thesis_env_old/
 manually_obtained_data/
