@@ -1,46 +1,30 @@
+import sys
 from importlib import import_module
 
+import fire
 import numpy as np
-import optuna
 import pandas as pd
+import ray
 from loguru import logger
 from numpy.random import RandomState
-from sklearn.feature_selection import SelectPercentile, mutual_info_classif
-from sklearn.metrics import get_scorer
+from ray import tune
+from ray.train import RunConfig
+from ray.tune.execution.placement_groups import PlacementGroupFactory
+from ray.tune.search import ConcurrencyLimiter
+from ray.tune.search.optuna import OptunaSearch
+from ray.tune.stopper import ExperimentPlateauStopper
+from ray.util.joblib import register_ray
 from sklearn.model_selection import cross_validate
 
+import joblib
 import wandb
 from src.data.dataloader import load_data
-from src.global_vars import BASE_DATA_DIR
+from src.global_vars import BASE_DATA_DIR, BASE_DIR
 from src.helper_function import (
     get_run_dir_for_experiment,
     get_scores,
+    is_cluster_environment,
 )
-
-
-def get_pipeline(standard_pipeline, search_space_sampler, optuna_trial):
-    trial_config = search_space_sampler(optuna_trial)
-
-    n_neighbors = trial_config["preprocessor__feature_space_change__n_neighbors"]
-    preprocessor__feature_space_change = SelectPercentile(
-        lambda X, y: mutual_info_classif(
-            X, y, n_neighbors=n_neighbors, discrete_features=False
-        ),
-        percentile=trial_config["preprocessor__feature_space_change__percentile"],
-    )
-
-    standard_pipeline = standard_pipeline.set_params(
-        preprocessor__feature_space_change=preprocessor__feature_space_change
-    )
-
-    if trial_config.get("model__oob_score", False):
-        trial_config["model__oob_score"] = get_scorer(trial_config["model__oob_score"])._score_func
-
-    standard_pipeline = standard_pipeline.set_params(
-        **{k: v for k, v in trial_config.items() if "model" in k}
-    )
-
-    return standard_pipeline
 
 
 def get_data(
@@ -66,48 +50,53 @@ def get_data(
     return data, labels
 
 
-def hyp_param_eval_with_cv(
-    data,
-    labels,
-    cv,
-    standard_pipeline,
-    scoring,
-    best_fit_scorer,
-    outer_cv_step,
-    search_space_sampler,
-    trial_config,
+def hyp_param_train_with_cv(
+    config, data, labels, cv, standard_pipeline, scoring, best_fit_scorer, outer_cv_step
 ):
-    pipeline = get_pipeline(standard_pipeline, search_space_sampler, trial_config)
+    standard_pipeline.set_params(**config)
 
-    logger.info("pipeline:")
-    print(pipeline)
+    logger.info("config")
+    print(config)
+    logger.info("standard_pipeline")
+    print(standard_pipeline)
 
-    cross_val_results = cross_validate(
-        pipeline,
-        data,
-        labels,
-        cv=cv,
-        scoring=scoring,
-        return_train_score=True,
-        n_jobs=1,
-    )
+    register_ray()
 
-    cross_val_res_dict = {
-        **{
-            k.replace("train_", "train/"): np.mean(v)
-            for k, v in cross_val_results.items()
-            if "train" in k
-        },
-        **{
-            k.replace("test_", "val/"): np.mean(v)
-            for k, v in cross_val_results.items()
-            if "test" in k
-        },
-    }
+    with joblib.parallel_backend("ray"):
+        cross_val_results = cross_validate(
+            standard_pipeline,
+            data,
+            labels,
+            cv=cv,
+            scoring=scoring,
+            return_train_score=True,
+            n_jobs=cv.n_splits if "n_splits" in cv.__dict__ else 1,
+        )
+
+        cross_val_res_dict = {
+            **{
+                k.replace("train_", "train/"): v
+                for k, v in cross_val_results.items()
+                if "train" in k
+            },
+            **{
+                k.replace("test_", "val/"): v
+                for k, v in cross_val_results.items()
+                if "test" in k
+            },
+        }
 
     wandb.log(cross_val_res_dict, step=outer_cv_step)
 
-    return cross_val_results["test_" + best_fit_scorer].mean()
+    tune.report(
+        {
+            **cross_val_res_dict,
+            "best_fit_metric": cross_val_results["test_" + best_fit_scorer].mean(),
+            "fit_times": cross_val_results["fit_time"],
+            "score_times": cross_val_results["score_time"],
+            "done": True,
+        }
+    )
 
 
 def main(
@@ -153,6 +142,16 @@ def main(
         None
 
     """
+    if is_cluster_environment():
+        logger.info("Running in SLURM cluster environment. Initializing Ray...")
+        ray.init(address="auto")  # Connect to Ray cluster
+    else:
+        logger.info("Running locally. Initializing Ray with default settings...")
+        ray.init()  # Local initialization
+
+    register_ray()  # Register Ray backend for joblib
+    assert ray.is_initialized(), "Ray is not initialized"
+
     config_module = import_module(config_script)
     setup = config_module.get_setup()
     (
@@ -164,7 +163,7 @@ def main(
         scoring,
         best_fit_scorer,
         tuning_mode,
-        search_space_sampler,
+        tuning_grid,
         tuning_num_samples,
     ) = setup.values()
 
@@ -201,7 +200,6 @@ def main(
             **wandb_params,
             tags=wandb_base_tags,
         )
-
     logger.success("wandb init done")
 
     # Load data
@@ -250,26 +248,65 @@ def main(
             **inner_cv_config["params"], random_state=random_state
         )
 
-        optuna_study = optuna.create_study(
-            direction=tuning_mode, study_name=f"outer_cv_{i}_for_{wandb.run.name}"
-        )
-        optuna_study.optimize(
-            lambda trial: hyp_param_eval_with_cv(
-                X_train,
-                y_train,
-                inner_cv,
-                standard_pipeline,
-                scoring,
-                best_fit_scorer,
-                i,
-                search_space_sampler,
-                trial,
-            ),
-            n_trials=tuning_num_samples,
+        partial_hyp_param_train_with_cv = tune.with_parameters(
+            hyp_param_train_with_cv,
+            data=X_train,
+            labels=y_train,
+            cv=inner_cv,
+            standard_pipeline=standard_pipeline,
+            scoring=scoring,
+            best_fit_scorer=best_fit_scorer,
+            outer_cv_step=i,
         )
 
-        best_trial = optuna_study.best_trial
-        best_model = get_pipeline(standard_pipeline, search_space_sampler, best_trial)
+        # Use tune.with_resources only on cluster; skip on local machines
+        if is_cluster_environment():
+            trainable = tune.with_resources(
+                partial_hyp_param_train_with_cv,
+                resources=PlacementGroupFactory(
+                    [{"CPU": 1, "GPU": 0}] * inner_cv_config["params"]["n_splits"]
+                ),
+            )
+        else:
+            trainable = partial_hyp_param_train_with_cv  # Skip resource specification
+
+        tuner = tune.Tuner(
+            trainable,
+            param_space=tuning_grid,
+            run_config=RunConfig(
+                name=wandb_params["name"],
+                storage_path=str(BASE_DIR / "ray_results"),
+                stop=ExperimentPlateauStopper(
+                    metric="best_fit_metric", mode=tuning_mode, patience=3
+                ),
+            ),
+            tune_config=tune.TuneConfig(
+                search_alg=ConcurrencyLimiter(OptunaSearch(), max_concurrent=3),
+                metric="best_fit_metric",
+                mode=tuning_mode,
+                num_samples=tuning_num_samples,
+                trial_dirname_creator=lambda trial: f"trial_{trial.trial_id}",
+            ),
+        )
+
+        # tuner = GridSearchCV(
+        #     standard_pipeline,
+        #     tuning_grid,
+        #     cv=inner_cv,
+        #     scoring=scoring,
+        #     refit=best_fit_scorer,
+        #     # verbose=3,  # we are logging, so not necessary
+        #     n_jobs=-1,
+        #     return_train_score=True,
+        # )
+
+        tuning_results = tuner.fit()
+
+        # table = wandb.Table(dataframe=pd.DataFrame(tuner.cv_results_).astype(str))
+        # wandb.log({f"Hyperparam tuning scores @ outer cv split {i}": table}, step=i)
+
+        best_config = tuning_results.get_best_model().config
+        best_model = standard_pipeline.set_params(**best_config)
         best_model.fit(X_train, y_train)
 
         train_outer_cv_score = get_scores(
@@ -288,46 +325,47 @@ def main(
         train_scores.append(train_outer_cv_score)
         test_scores.append(test_outer_cv_score)
 
-        # # feature importance plot wandb
-        # if hasattr(best_model.named_steps["model"], "feature_importances_"):
-        #     feature_importances = best_model.named_steps["model"].feature_importances_
-        #     print(feature_importances)
-        #     feature_importances_df = pd.DataFrame(feature_importances, index=X_train.columns, columns=["Importance"])
+        # feature importance plot wandb
+        if hasattr(best_model.named_steps["model"], "feature_importances_"):
+            feature_importances = best_model.named_steps["model"].feature_importances_
+            feature_importances_df = pd.DataFrame(
+                {"Feature": X_train.columns, "Importance": feature_importances}
+            )
 
-        #     # Log all features
-        #     # wandb.log(
-        #     #     {
-        #     #         f"Feature Importance (All) @ outer cv split {i}": wandb.plot.bar(
-        #     #             wandb.Table(dataframe=feature_importances_df),
-        #     #             "Feature",
-        #     #             "Importance",
-        #     #             title=f"Feature Importance (All) @ outer cv split {i}",
-        #     #         )
-        #     #     },
-        #     #     step=i,
-        #     # )
+            # Log all features
+            # wandb.log(
+            #     {
+            #         f"Feature Importance (All) @ outer cv split {i}": wandb.plot.bar(
+            #             wandb.Table(dataframe=feature_importances_df),
+            #             "Feature",
+            #             "Importance",
+            #             title=f"Feature Importance (All) @ outer cv split {i}",
+            #         )
+            #     },
+            #     step=i,
+            # )
 
-        #     # Log top 5 and bottom 5 features
-        #     sorted_feature_importances_df = feature_importances_df.sort_values(
-        #         by="Importance", ascending=False
-        #     )
-        #     best_and_worst_features = pd.concat(
-        #         [
-        #             sorted_feature_importances_df.head(5),
-        #             sorted_feature_importances_df.tail(5),
-        #         ]
-        #     )
-        #     wandb.log(
-        #         {
-        #             f"Feature Importance (Top 5 and Bottom 5) @ outer cv split {i}": wandb.plot.bar(
-        #                 wandb.Table(dataframe=best_and_worst_features),
-        #                 "Feature",
-        #                 "Importance",
-        #                 title=f"Feature Importance (Top 5 and Bottom 5) @ outer cv split {i}",
-        #             )
-        #         },
-        #         step=i,
-        #     )
+            # Log top 5 and bottom 5 features
+            sorted_feature_importances_df = feature_importances_df.sort_values(
+                by="Importance", ascending=False
+            )
+            best_and_worst_features = pd.concat(
+                [
+                    sorted_feature_importances_df.head(5),
+                    sorted_feature_importances_df.tail(5),
+                ]
+            )
+            wandb.log(
+                {
+                    f"Feature Importance (Top 5 and Bottom 5) @ outer cv split {i}": wandb.plot.bar(
+                        wandb.Table(dataframe=best_and_worst_features),
+                        "Feature",
+                        "Importance",
+                        title=f"Feature Importance (Top 5 and Bottom 5) @ outer cv split {i}",
+                    )
+                },
+                step=i,
+            )
 
     # log mean and std of the results
     train_scores = pd.DataFrame(train_scores)
@@ -372,6 +410,7 @@ def main(
     #     }
     # )
 
+    ray.shutdown()
     logger.success("Done!")
     wandb.finish()
 
@@ -379,11 +418,9 @@ def main(
 if __name__ == "__main__":
     # fire.Fire(main)
 
-    main(
-        "run_configs.simple_rf_baseline_for_optuna",
-        study_accessions=["MGYS00003677"],
-        summary_type="GO_abundances",
-        pipeline_version="v4.1",
-        label_col="disease status__biosamples",
-        positive_class_label="Sick",
-    )
+    main("run_configs.simple_rf_baseline",
+         study_accessions=['MGYS00003677'],
+         summary_type="GO_abundances",
+         pipeline_version="v4.1",
+         label_col="disease status__biosamples",
+         positive_class_label="Sick")

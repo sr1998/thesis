@@ -1,33 +1,26 @@
-from arfs.feature_selection.lasso import LassoFeatureSelection
-from ray import tune
 from sklearn.calibration import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_selection import SelectPercentile, mutual_info_classif
 from sklearn.metrics import (
     average_precision_score,
-    get_scorer,
     make_scorer,
     roc_auc_score,
 )
 from sklearn.model_selection import ShuffleSplit
-from sklearn.pipeline import FunctionTransformer
 from sklearn.preprocessing import Normalizer
 
 from src.helper_function import create_pipeline
-from src.preprocessing.functions import NumpyReplace, total_sum_scaling
-from src.preprocessing.micronorm import GMPR_normalize
 
 
 def get_setup():
-    # TODO Define the misc config. Here is a dummy example
     misc_config = {
         "wandb": True,  # whether to use wandb or not
         "wandb_params": {
             "project": "thesis_baselines",
             "group": "RF",  # model name can be useful here
+            "name": "RF_baseline",
         },
         "verbose_pipeline": True,  # whether to print verbose output from the pipeline
-        "cache_pipeline_steps": True,
+        "cache_pipeline_steps": False,  # True giving errors
     }
 
     # outer_cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
@@ -46,8 +39,11 @@ def get_setup():
 
     preprocessor_pipeline = create_pipeline(
         [
-            ("normalizations_and_transformations", "pass_through"),
-            ("feature_space_change", "passthrough"),
+            ("normalizations_and_transformations", Normalizer(norm="l1")),
+            (
+                "feature_space_change",
+                "passthrough",
+            ),  # assumed to be SelectPercentile(MutualInfoClassif)
         ],
         misc_config,
     )
@@ -89,34 +85,37 @@ def get_setup():
         "recall_weighted": "recall_weighted",
     }
     best_fit_scorer = "f1_weighted"
-    tuning_mode = "max"  # "max" or "min"
+    tuning_mode = "maximize"  # "maximize" or "minimize"
 
-    # TODO Define the tuning grid. Here is a dummy example
-    tuning_grid = [
-        {
-            "preprocessor__normalizations_and_transformations": Normalizer(norm="l1"),
-            "preprocessor__feature_space_change": tune.choice(
-                "passthrough",
-                tune.sample_from(
-                    lambda spec: SelectPercentile(
-                        mutual_info_classif(
-                            discrete_features=False, n_neighbors=tune.randint(2, 100)
-                        ),
-                        percentile=tune.randint(0, 100),
-                    )
-                ),
-            ),
-            "model__n_estimators": tune.randint(
-                10, 500
-            ),  # Replace get_rf_search_space logic
-            "model__max_depth": tune.choice([None, tune.randint(10, 200)]),
-            "model__criterion": tune.choice(["gini", "entropy"]),
-            "model__class_weight": tune.choice(["balanced", None]),
-            "model__oob_score": tune.choice(
-                [False, get_scorer(best_fit_scorer)._score_func]
-            ),
+    def search_space_sampler(optuna_trial):
+        preprocessor__feature_space_change__percentile = optuna_trial.suggest_int(
+            "preprocessor__feature_space_change__percentile", 0, 100
+        )
+        preprocessor__feature_space_change__n_neighbors = optuna_trial.suggest_int(
+            "preprocessor__feature_space_change__n_neighbors", 2, 100
+        )
+        model__n_estimators = optuna_trial.suggest_int("model__n_estimators", 10, 500)
+        model__max_depth = optuna_trial.suggest_int("model__max_depth", 10, 200)
+        model__criterion = optuna_trial.suggest_categorical(
+            "model__criterion", ["gini", "entropy"]
+        )
+        model__class_weight = optuna_trial.suggest_categorical(
+            "model__class_weight", ["balanced", None]
+        )
+        model__oob_score = optuna_trial.suggest_categorical(
+            "model__oob_score", [False, best_fit_scorer]
+        )
+
+        return {
+            "preprocessor__feature_space_change__percentile": preprocessor__feature_space_change__percentile,
+            "preprocessor__feature_space_change__n_neighbors": preprocessor__feature_space_change__n_neighbors,
+            "model__n_estimators": model__n_estimators,
+            "model__max_depth": model__max_depth,
+            "model__criterion": model__criterion,
+            "model__class_weight": model__class_weight,
+            "model__oob_score": model__oob_score,
         }
-    ]
+
     tuning_num_samples = 100
 
     return {
@@ -128,6 +127,6 @@ def get_setup():
         "scoring": score_functions,
         "best_fit_scorer": best_fit_scorer,
         "tuning_mode": tuning_mode,
-        "tuning_grid": tuning_grid,
-        "tuning_num_samples": tuning_num_samples
+        "search_space_sampler": search_space_sampler,
+        "tuning_num_samples": tuning_num_samples,
     }

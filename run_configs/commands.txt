@@ -1,0 +1,1 @@
+srun apptainer exec -B $HOME:$HOME $APPTAINER_ROOT/$APPTAINER_NAME python -m src.data.mgnify_data_getter --study_download_label_start ... --study_accessions ... --download_metadata True

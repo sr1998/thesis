@@ -110,8 +110,8 @@ def get_scores(
     scores = {}
     y_n_unique = len(np.unique(y))
 
-    y_pred = model.predict_proba(X)
-    y_dec = model.decision_function(X)
+    y_pred = model.predict_proba(X) if hasattr(model, "predict_proba") else None
+    y_dec = model.decision_function(X) if hasattr(model, "decision_function") else None
     y_pred = model.predict(X)
 
     for score_name, scorer in scoring.items():
@@ -120,19 +120,19 @@ def get_scores(
             if "roc_auc" in score_name or "average_precision" in score_name:
                 kwargs = scorer._kwargs if hasattr(scorer, "_kwargs") else {}
                 # Get kwargs available, e.g. {average="micro"} if scorer is not a string but a make_scorer object
-                if hasattr(model, "predict_proba"):
+                if y_pred is not None:
                     y_model = y_pred
                     scoring_function._response_method = "predict_proba"
-                elif hasattr(model, "decision_function"):
+                elif y_dec is not None:
                     y_model = y_dec
                     scoring_function._response_method = "decision_function"
                 else:
                     y_model = y_pred
                     scoring_function._response_method = "predict"
 
-                if y_n_unique == 2:
+                if y_n_unique == 2 and y_pred is not None:  # [:, 1] needed somewhere, but this seems to work and [:, 0] does not
                     scores[train_or_test + "/" + score_name] = scoring_function(
-                        y, y_model[:, 1], **kwargs
+                        y, y_model, **kwargs
                     )
                 else:
                     scores[train_or_test + "/" + score_name] = scoring_function(
@@ -177,3 +177,8 @@ def plotly_bar_plot_with_error_bars(df: pd.DataFrame, title: str) -> go.Figure:
     )
 
     return fig
+
+
+def is_cluster_environment():
+    """Detect whether the script is running in a SLURM cluster environment."""
+    return "SLURM_JOB_ID" in os.environ
