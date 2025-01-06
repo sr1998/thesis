@@ -69,9 +69,7 @@ def load_data(
         ]
         data = data.set_index("#SampleID")
 
-        logger.debug(
-            f"Summary data @ genus level: {df_str_for_loguru(data)}"
-        )
+        logger.debug(f"Summary data @ genus level: {df_str_for_loguru(data)}")
         logger.debug(f"Summary data shape - genus level: {data.shape}")
 
     data = data.T
@@ -92,7 +90,9 @@ def load_data(
     logger.debug(f"Metadata: {df_str_for_loguru(metadata)}")
     metadata_with_only_sample_id = metadata.loc[["sample_id"]]
     metadata = metadata.loc[metdata_cols_to_use_as_features + [label_col]]
-    logger.debug(f"Metadata with cols to be used as features: {df_str_for_loguru(metadata)}")
+    logger.debug(
+        f"Metadata with cols to be used as features: {df_str_for_loguru(metadata)}"
+    )
     logger.debug(f"Metadata shape: {metadata.shape}")
 
     # getting run_id to sample_id to map sample_id to run_id in metadata index
@@ -104,12 +104,12 @@ def load_data(
         if value not in column_mapper:
             column_mapper[value] = []
         column_mapper[value].append(key)
-    print("metadata only: \n", metadata_with_only_sample_id)
-    
+
     new_columns = {
-        new_name: metadata_with_only_sample_id[old_name]
-        for old_name, new_names in column_mapper.items()
-        for new_name in new_names
+        run_id: metadata_with_only_sample_id[sample_id]
+        for sample_id, run_ids in column_mapper.items()
+        for run_id in run_ids
+        if sample_id in metadata_with_only_sample_id
     }
     metadata_with_run_id_as_index = metadata_with_only_sample_id.drop(
         columns=list(column_mapper.keys())

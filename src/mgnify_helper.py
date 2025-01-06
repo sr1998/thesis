@@ -250,7 +250,7 @@ class MGnifyData:
         checkpoint = self.load_checkpoint(checkpoint_path, time_threshold=cache_time_threshold)
         url = checkpoint.get("next_url", start_url)
         study_sizes = checkpoint.get("study_sizes", {})
-        print(url)
+
         with requests_session() as session:
             config_session(session)
             
@@ -477,7 +477,7 @@ class MGnifyData:
             external_metadata = external_metadata.set_index("sample_id").T.to_dict()
             for sample_id, sample_metadata in external_metadata.items():
                 if sample_id in metadata:
-                    [sample_id].update(sample_metadata)
+                    metadata[sample_id].update(sample_metadata)
             self.save_checkpoint({"metadata": metadata, "next_page_url": url}, cache_file)
 
         logger.success(f"Found metadata for {len(metadata)} samples in study {study_id}.")
