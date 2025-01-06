@@ -138,7 +138,10 @@ class MGnifyData:
         if not study_ids:
             study_ids = self.get_study_accessions()
 
-        checkpoint_file = os.path.join(self.cache_folder, f"download_links_{label_start_str}_{hasher(frozenset(study_ids))}.json")
+        if len(study_ids) > 1:
+            checkpoint_file = os.path.join(self.cache_folder, f"download_links_{label_start_str}_{hasher(frozenset(study_ids))}.json")
+        else:
+            checkpoint_file = os.path.join(self.cache_folder, f"download_links_{label_start_str}_{study_ids[0]}.json")
         checkpoint_data = self.load_checkpoint(checkpoint_file)
 
         # Load existing progress if available and still valid
@@ -370,7 +373,7 @@ class MGnifyData:
         logger.success(f"Found {len(result_dict)} run ID to sample ID pairs for study {study_id}.")
         return result_dict
 
-    def download_metadata_for_studies(self, study_ids: List[str], page_size: int = PAGE_SIZE, n_samples: int = None, cache_time_threshold=24*7*365*10) -> None:
+    def download_metadata_for_studies(self, study_ids: List[str], page_size: int = PAGE_SIZE, n_samples: int = None, external_metadata: str | Path = "", cache_time_threshold=24*7*365*10) -> None:
         """
         Download metadata for a list of studies. It includes the metadata from MGnify, BioSamples, and ELIXIR Contextual Data ClearingHouse
 
@@ -378,6 +381,7 @@ class MGnifyData:
             study_ids (list): The list of study IDs to get the metadata for.
             page_size (int): The number of samples to retrieve per page. Max allowed: 250.
             n_sample (int): The number of samples to retrieve. If None, all samples are retrieved. If given, at least this many samples are retrieved and the retrival is stopped asap.
+            external_metadata (str): The path to a csv file containing additional metadata to merge with the final metadata of each study.
             cache_time_threshold (int): The number of hours the previous cache is valid for.
 
         Returns:
@@ -385,11 +389,11 @@ class MGnifyData:
         """
         for study_id in study_ids:
             logger.info(f"Downloading metadata for study {study_id}.")
-            self.get_metadata_for_study(study_id, page_size, n_samples, cache_time_threshold)
+            self.get_metadata_for_study(study_id, page_size, n_samples, external_metadata, cache_time_threshold)
 
     # TODO using csv for metadata is more efficient, but we need new caching mechanism (maybe flexible)
     @logger.catch(reraise=True, onerror=lambda _: logger.error("Failed to get metadata for a study."))
-    def get_metadata_for_study(self, study_id: str, page_size: int = PAGE_SIZE, n_samples: int = None, cache_time_threshold=24*7*365*10) -> pd.DataFrame: # TODO add additinal functionality of getting the runs and change get_assembly_id_to_sample_id_dict based on this as input
+    def get_metadata_for_study(self, study_id: str, page_size: int = PAGE_SIZE, n_samples: int = None, external_metadata: str | Path = "", cache_time_threshold=24*7*365*10) -> pd.DataFrame: # TODO add additinal functionality of getting the runs and change get_assembly_id_to_sample_id_dict based on this as input
         """
         Get metadata for a specific study. It includes the metadata from MGnify, BioSamples, and ELIXIR Contextual Data ClearingHouse
 
@@ -397,6 +401,7 @@ class MGnifyData:
             study_id (str): The MGnify study ID to get the metadata for.
             page_size (int): The number of samples to retrieve per page. Max allowed: 250.
             n_samples (int): The number of samples to retrieve. If None, all samples are retrieved. If given, at least this many samples are retrieved and the retrival is stopped asap.
+            external_metadata (str): The path to a csv file containing additional metadata to include in the final metadata.
             cache_time_threshold (int): The number of hours the previous cache is valid for.
 
         Returns:
@@ -408,6 +413,12 @@ class MGnifyData:
         cached_metadata = self.load_checkpoint(cache_file, time_threshold=cache_time_threshold)
         metadata = cached_metadata.get("metadata", {})
         url = cached_metadata.get("next_page_url", start_url)
+
+        if not url:
+            logger.success(f"Metadata for {len(metadata)} samples in study {study_id} already downloaded.")
+            metadata = pd.DataFrame(metadata)   # rows are features, columns are samples (as in summary data)
+            return metadata
+
 
         # get all sample ids for the study + mgnify metadata
         with requests_session() as session:
@@ -456,6 +467,18 @@ class MGnifyData:
 
                 # Save progress after each page
                 self.save_checkpoint({"metadata": metadata, "next_page_url": url}, cache_file)
+
+        if external_metadata:
+            external_metadata = pd.read_table(external_metadata) if str(external_metadata).endswith(".tsv") else pd.read_csv(external_metadata)
+            # replace nan by ""
+            external_metadata = external_metadata.fillna("")
+            # keep only samples that are in the metadata
+            external_metadata = external_metadata[external_metadata["sample_id"].isin(metadata.keys())]
+            external_metadata = external_metadata.set_index("sample_id").T.to_dict()
+            for sample_id, sample_metadata in external_metadata.items():
+                if sample_id in metadata:
+                    [sample_id].update(sample_metadata)
+            self.save_checkpoint({"metadata": metadata, "next_page_url": url}, cache_file)
 
         logger.success(f"Found metadata for {len(metadata)} samples in study {study_id}.")
         metadata = pd.DataFrame(metadata)   # rows are features, columns are samples (as in summary data)

@@ -104,6 +104,8 @@ def load_data(
         if value not in column_mapper:
             column_mapper[value] = []
         column_mapper[value].append(key)
+    print("metadata only: \n", metadata_with_only_sample_id)
+    
     new_columns = {
         new_name: metadata_with_only_sample_id[old_name]
         for old_name, new_names in column_mapper.items()

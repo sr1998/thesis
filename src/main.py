@@ -1,5 +1,6 @@
 from importlib import import_module
 
+import fire
 import numpy as np
 import optuna
 import pandas as pd
@@ -34,7 +35,9 @@ def get_pipeline(standard_pipeline, search_space_sampler, optuna_trial):
     )
 
     if trial_config.get("model__oob_score", False):
-        trial_config["model__oob_score"] = get_scorer(trial_config["model__oob_score"])._score_func
+        trial_config["model__oob_score"] = get_scorer(
+            trial_config["model__oob_score"]
+        )._score_func
 
     standard_pipeline = standard_pipeline.set_params(
         **{k: v for k, v in trial_config.items() if "model" in k}
@@ -377,13 +380,13 @@ def main(
 
 
 if __name__ == "__main__":
-    # fire.Fire(main)
+    fire.Fire(main)
 
-    main(
-        "run_configs.simple_rf_baseline_for_optuna",
-        study_accessions=["MGYS00003677"],
-        summary_type="GO_abundances",
-        pipeline_version="v4.1",
-        label_col="disease status__biosamples",
-        positive_class_label="Sick",
-    )
+    # main(
+    #     "run_configs.simple_rf_baseline_for_optuna",
+    #     study_accessions=["MGYS00003677"],
+    #     summary_type="GO_abundances",
+    #     pipeline_version="v4.1",
+    #     label_col="disease status__biosamples",
+    #     positive_class_label="Sick",
+    # )

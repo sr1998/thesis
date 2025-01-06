@@ -11,7 +11,8 @@ def get_mgnify_data(study_download_label_start: str,
                     study_accessions: Optional[List[str]] = None,
                     biomes_desired: Optional[List[str]] = None,
                     download_metadata: bool = False,
-                    base_data_dir: Union[str, Path] = os_path_join(BASE_DIR, "data")
+                    base_data_dir: Union[str, Path] = os_path_join(BASE_DIR, "data"),
+                    external_metadata: Optional[Union[str, Path]] = None
                     ) -> None:  
     """
     Function to download and if desired merge data and metadata and save it in the data directory
@@ -32,12 +33,11 @@ def get_mgnify_data(study_download_label_start: str,
                                                         #    desired_biomes=biomes_desired,
                                                            study_ids=study_accessions
                                                            )
-
     download_links = mgnify.filter_download_links_for_most_recent_link(download_links)
     mgnify.download_summary_for_studies(download_links)
 
     if download_metadata:
-        mgnify.download_metadata_for_studies(list(download_links.keys()))
+        mgnify.download_metadata_for_studies(list(download_links.keys()), external_metadata=external_metadata)
 
 
 def main():
