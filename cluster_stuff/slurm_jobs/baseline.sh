@@ -35,7 +35,7 @@ export SSL_CERT_FILE=./cacert.pem
 # Note: There cannot be any characters incuding space behind the `\` symbol.
 srun apptainer exec \
     -B $HOME:$HOME \
-    --env $HOME/.env \
+    --env-file $HOME/.env \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main \
     --config_script "run_configs.simple_rf_baseline_for_optuna" \
