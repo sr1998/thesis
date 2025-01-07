@@ -112,7 +112,7 @@ def load_data(
         if sample_id in metadata_with_only_sample_id
     }
     metadata_with_run_id_as_index = metadata_with_only_sample_id.drop(
-        columns=list(column_mapper.keys())
+        columns=list(column_mapper.keys()), errors="ignore"
     )
     metadata_with_run_id_as_index = metadata_with_run_id_as_index.join(
         pd.DataFrame(new_columns)
@@ -138,6 +138,9 @@ def load_data(
     ).sum()  # FIXME if wanted: we can do other things than summation or skip this
     # add metadata labels to combined data
     combined_data = combined_data.join(metadata.T, how="inner")
+
+    # drop rows without label
+    combined_data = combined_data.dropna(subset=[label_col])
 
     logger.debug(f"Combined data: {df_str_for_loguru(combined_data)}")
     logger.debug(f"Combined data shape: {combined_data.shape}")

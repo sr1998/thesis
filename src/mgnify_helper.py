@@ -470,8 +470,6 @@ class MGnifyData:
 
         if external_metadata:
             external_metadata = pd.read_table(external_metadata) if str(external_metadata).endswith(".tsv") else pd.read_csv(external_metadata)
-            # replace nan by ""
-            external_metadata = external_metadata.fillna("")
             # keep only samples that are in the metadata
             external_metadata = external_metadata[external_metadata["sample_id"].isin(metadata.keys())]
             external_metadata = external_metadata.set_index("sample_id").T.to_dict()
