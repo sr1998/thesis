@@ -1,3 +1,4 @@
+import os
 from importlib import import_module
 
 import fire
@@ -181,12 +182,14 @@ def main(
     logger.add(logger_path, colorize=True, level="DEBUG")
     logger.info("Starting with it all")
 
+    job_id = os.getenv("SLURM_JOB_ID")
     wandb_base_tags = [
         "d_" + str(study_accessions),
         "s_" + summary_type,
         "p_" + pipeline_version,
         "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
-        "label_" + label_col,
+        "l_" + label_col,
+        "j_" + job_id if job_id else "j_local",
     ]
 
     # Initialize wandb if enabled
@@ -221,8 +224,18 @@ def main(
     logger.success("Data obtained")
 
     # log data statistics to wandb
-    wandb.log({"Data description": wandb.Table(dataframe=data.describe().T.reset_index())}, step=0)
-    wandb.log({"labels": wandb.Table(dataframe=labels.value_counts(dropna=False).reset_index())}, step=0)
+    wandb.log(
+        {"Data description": wandb.Table(dataframe=data.describe().T.reset_index())},
+        step=0,
+    )
+    wandb.log(
+        {
+            "labels": wandb.Table(
+                dataframe=labels.value_counts(dropna=False).reset_index()
+            )
+        },
+        step=0,
+    )
 
     # Encode labels. Make sure the positive class is labeled as 1
 
@@ -356,8 +369,14 @@ def main(
         {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
     )
 
-    wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)}, step=i+1)
-    wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)}, step=i+1)
+    wandb.log(
+        {"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)},
+        step=i + 1,
+    )
+    wandb.log(
+        {"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)},
+        step=i + 1,
+    )
 
     # NOT WORKING
     # # Use WandB's plotting capabilities to create bar plots

@@ -26,13 +26,13 @@ def get_setup():
     # outer_cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
     outer_cv_config = {
         "type": ShuffleSplit,
-        "params": {"n_splits": 5, "test_size": 0.2, "random_state": 42},
+        "params": {"n_splits": 3, "test_size": 0.2, "random_state": 42},
     }
 
     inner_cv_config = {
         "type": ShuffleSplit,
         "params": {
-            "n_splits": 5,
+            "n_splits": 3,
             "test_size": 0.2,
         },  # don't provide random_state, as we want to change it per outer fold
     }
@@ -89,7 +89,7 @@ def get_setup():
 
     def search_space_sampler(optuna_trial):
         preprocessor__feature_space_change__percentile = optuna_trial.suggest_int(
-            "preprocessor__feature_space_change__percentile", 0, 100
+            "preprocessor__feature_space_change__percentile", 10, 100
         )
         preprocessor__feature_space_change__n_neighbors = optuna_trial.suggest_int(
             "preprocessor__feature_space_change__n_neighbors", 2, 100

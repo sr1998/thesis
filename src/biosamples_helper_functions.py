@@ -26,6 +26,8 @@ def get_metadata_of_samples(ids: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
             response = sessions.get(f"{BIOSAMPLES_BASE_API_URL}/samples/{biosmaple_id}", timeout=10)
             characteristics = response.json().get("characteristics", {})
             metadata = {x + "__biosamples": characteristics[x][0]["text"] for x in characteristics if characteristics[x][0].get("tag", "") == "attribute"} 
+            if "description" in characteristics.keys():
+                metadata["description__biosamples"] = characteristics["description"][0]["text"]
             to_return[sample_id] = metadata
     return to_return
     

@@ -27,7 +27,6 @@ def get_lgbm_search_space():
     # "model__lgmb__num_leaves": [31, 50, 100, 1000, 10000, 100000],
     # "model__lgmb__colsample_bytree": [0.4, 0.7, 1],
     # "model__lgmb__subsample": [0, 1, 10, 25],
-    # "model__lgmb__bagging_fraction": [.2, .5, .8, 1],
     # "model__lgmb__num_iterations": [100, 1000, 10000],
     # "model__lgmb__max_depth": [-1, 10, 100],
     # "model__lgmb__min_child_samples": [20, 10, 50],
