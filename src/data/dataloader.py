@@ -60,7 +60,7 @@ def load_data(
         logger.debug(f"Summary data shape: {data.shape}")
     else:
         logger.debug("Loading taxonomy data")
-        data = pd.read_table(summary_file, sep="\t", header=0, index_col=0)
+        data = pd.read_table(summary_file, sep="\t", header=0)
 
         logger.debug("Summary data: " + df_str_for_loguru(data))
         logger.debug(f"Summary data shape: {data.shape}")
