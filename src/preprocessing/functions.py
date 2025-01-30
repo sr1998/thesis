@@ -15,15 +15,52 @@ class NumpyReplace(TransformerMixin, BaseEstimator):
         return np.place(X, X == 0, self.replace)
 
 
-def total_sum_scaling(data: np.ndarray | pd.DataFrame) -> np.ndarray:
-    """Normalize the data by dividing each feature count of a sample by the total count of that sample.
-    
+def total_sum_scaling(df: pd.DataFrame) -> pd.DataFrame:
+    """Total sum scaling of a dataframe.
+
+    Normalizes the dataframe by the sum of each row.
+
     Args:
-        data: The data to be normalized. Each row is a sample and each column is a feature.
+        df: The dataframe to normalize.
     """
-    if isinstance(data, pd.DataFrame):
-        data = data.to_numpy()
-    
-    row_sums = data.sum(axis=1, keepdims=True)
-    normalized_data = np.divide(data, row_sums + np.isclose(row_sums, 0))
-    return normalized_data
+    row_sums = df.sum(axis=1)
+    df = df.div(row_sums + (row_sums == 0), axis=0)
+    return df
+
+
+def centered_arcsine_transform(df: pd.DataFrame) -> pd.DataFrame:
+    """Centered arcsine transform of a dataframe.
+
+    Assumes that the dataframe contains proportions of some kind, i.e. values in [0, 1].
+    """
+
+    def arcsine(x):
+        return np.arcsin(np.sqrt(x))
+
+    r, c = df.shape
+    C = np.eye(c) - 1 / c * np.ones((c, c))
+    df_vals = df.to_numpy()
+    df_vals = arcsine(df_vals)
+    df_vals = df_vals @ C
+    df = pd.DataFrame(df_vals, index=df.index, columns=df.columns)
+    return df
+
+
+def pandas_label_encoder(df: pd.DataFrame) -> pd.DataFrame:
+    """Encode the labels of a dataframe. All columns of type "object" are encoded.
+
+    Args:
+        df: The dataframe to encode.
+
+    Returns:
+        The encoded dataframe.
+
+    """
+    from sklearn.preprocessing import LabelEncoder
+
+    le = LabelEncoder()
+    for col in df.columns:
+        if df[col].dtype == "object":
+            df[col] = le.fit_transform(df[col])
+
+    return df
