@@ -113,7 +113,10 @@ def hyp_param_eval_with_cv(
 
     return cross_val_results["test_" + best_fit_scorer].mean()
 
-
+# TODO class imbalance fix
+# TODO feature importance analysis
+# TODO save most stuff locally instead of wandb
+#FIXME: Improve what is logged to wandb: hyper-param tuning is only showing last one. ...
 def main(
     config_script: str,
     *,
