@@ -5,6 +5,7 @@ import pandas as pd
 from torch import Tensor
 from torch.utils.data import Dataset, Sampler
 
+from src.helper_function import circular_slice
 from src.preprocessing.functions import pandas_label_encoder
 
 
@@ -16,9 +17,9 @@ class MicrobiomeDataset(Dataset):
         samples: pd.DataFrame,
         label_and_project: pd.DataFrame,
         preprocessor=None,
-        target_preprocessor=None,
+        target_preprocessor=pandas_label_encoder,
         transform=None,
-        target_transform=pandas_label_encoder,
+        target_transform=None,
     ):
         """Constructor for the MicrobiomeDataset class.
 
@@ -58,7 +59,7 @@ class MicrobiomeDataset(Dataset):
         # Create a dictionary that maps the project to the indices per class for that project
         self.group_to_label_idx_per_class = {
             group: {
-                label: indices.tolist()
+                label: np.array(indices)    # np arrays used to make circular slicing for efficient
                 for label, indices in group_df.groupby("label").groups.items()
             }
             for group, group_df in by_project_grouped_labels
@@ -132,21 +133,19 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
 
         self.dataset = dataset
         self.groups = list(dataset.group_to_label_idx_per_class.keys())
-        # TODO think a bit more about this. Some studies are really small, so maybe better to just sample all data in all studies
-        # TODO another method is to have a list that will select projects, and the number of times project occurs is equal to number of batches it can produce (I THINK THIS IS BETTER)
-        self.batches_per_class = [
-            max(len(ids) for ids in label_dict.values())
-            for label_dict in dataset.group_to_label_idx_per_class.values()
-        ]
 
-        self.groups_to_sample = []
-        self.n_iterations = (
-            min(
-                min(len(ids) for ids in label_dict.values())
-                for label_dict in dataset.group_to_label_idx_per_class.values()
-            )
-            // self.K_shot
-        )
+        # number of batches each group can give is given by its largest class (so we oversample the smaller class)
+        # +1 for each group to make sure all data is sampled in each epoch (mainly to prevent issues with large K_shot and small classes)
+        self.batches_per_group = {
+            group: max(len(ids) for ids in label_dict.values()) // self.K_shot + 1
+            for group, label_dict in dataset.group_to_label_idx_per_class.items()
+        }
+
+        self.groups_to_sample = [
+            group
+            for group, n_batches in self.batches_per_group.items()
+            for _ in range(n_batches)
+        ]
 
         if self.shuffle_once or self.shuffle:
             self.shuffle_data()
@@ -156,7 +155,7 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
 
     def shuffle_data(self):
         # TODO think about this: because for validation shuffle is only done once, a some data will just not be selected for the smaller class
-        random.shuffle(self.groups)
+        random.shuffle(self.groups_to_sample)
         for group in self.groups:
             for label, label_ids in self.dataset.group_to_label_idx_per_class[
                 group
@@ -168,23 +167,23 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
             self.shuffle_data()
 
         start_indices_per_group = {group: 0 for group in self.groups}
-        for _ in range(self.n_iterations):
-            for group in self.groups:
-                batch = []
-                label_ids_per_class = self.dataset.group_to_label_idx_per_class[group]
-                start_idx = start_indices_per_group[group]
+        for group in self.groups_to_sample:
+            batch = []
+            label_ids_per_class = self.dataset.group_to_label_idx_per_class[group]
+            start_idx = start_indices_per_group[group]
+            for label_ids in label_ids_per_class.values():
+                # We sample the label_ids of the class circularly as we have number of batches based on the
+                # largest class for each group (so the smaller class is oversampled)
+                batch.extend(circular_slice(label_ids, start_idx, start_idx + self.K_shot))
+            start_indices_per_group[group] += self.K_shot
+            start_idx = start_indices_per_group[group]
+            if self.include_query:
                 for label_ids in label_ids_per_class.values():
-                    batch.extend(label_ids[start_idx : start_idx + self.K_shot])
+                    # We sample the label_ids of the class circularly as we have number of batches based on the
+                    # largest class for each group (so the smaller class is oversampled)
+                    batch.extend(circular_slice(label_ids, start_idx, start_idx + self.K_shot))
                 start_indices_per_group[group] += self.K_shot
-                start_idx = start_indices_per_group[group]
-                if self.include_query:
-                    for label_ids in label_ids_per_class.values():
-                        batch.extend(label_ids[start_idx : start_idx + self.K_shot])
-                    start_indices_per_group[group] += self.K_shot
-                print(batch)
-                yield batch
-
-            random.shuffle(self.groups)
+            yield batch
 
     def __len__(self):
-        return self.n_iterations * len(self.groups)
+        return len(self.groups_to_sample)

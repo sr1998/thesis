@@ -182,3 +182,22 @@ def plotly_bar_plot_with_error_bars(df: pd.DataFrame, title: str) -> go.Figure:
 def is_cluster_environment():
     """Detect whether the script is running in a SLURM cluster environment."""
     return "SLURM_JOB_ID" in os.environ
+
+
+def circular_slice(arr: Iterable, start: int, end: int) -> Iterable:
+    """Slice a list with wrap-around.
+
+    Args:
+        arr: The list to slice.
+        start: The start index of the slice.
+        end: The end index of the slice.
+
+    Returns:
+        The sliced list.
+    """
+    n = len(arr)
+    if n == 0:
+        return np.array([])  # Handle empty array case
+    
+    indices = np.arange(start, end) % n  # Compute wrapped indices
+    return arr[indices]  # Direct NumPy indexing
