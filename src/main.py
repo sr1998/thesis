@@ -265,13 +265,7 @@ def main(
             metdata_cols_to_use_as_features,
         )
     elif what == "sun et al":
-        data, labels = get_sun_et_al_data(
-            study,
-            summary_type,
-            pipeline_version,
-            label_col,
-            metdata_cols_to_use_as_features,
-        )
+        data, labels = get_sun_et_al_data(study)
     else:
         raise ValueError("Invalid value for 'what'")
 
