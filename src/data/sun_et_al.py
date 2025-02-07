@@ -64,6 +64,7 @@ class MicrobiomeDataset(Dataset):
             }
             for group, group_df in by_project_grouped_labels
         }
+        # labels, sorted as samples
         self.labels = Tensor(label_and_project["label"].to_numpy())
 
         self.transform = transform
@@ -136,14 +137,14 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
 
         # number of batches each group can give is given by its largest class (so we oversample the smaller class)
         # +1 for each group to make sure all data is sampled in each epoch (mainly to prevent issues with large K_shot and small classes)
-        self.batches_per_group = {
+        self.n_batches_per_group = {
             group: max(len(ids) for ids in label_dict.values()) // self.K_shot + 1
             for group, label_dict in dataset.group_to_label_idx_per_class.items()
         }
 
         self.groups_to_sample = [
             group
-            for group, n_batches in self.batches_per_group.items()
+            for group, n_batches in self.n_batches_per_group.items()
             for _ in range(n_batches)
         ]
 
