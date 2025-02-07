@@ -135,19 +135,20 @@ def hyp_param_eval_with_cv(
 
     return cross_val_results["test_" + best_fit_scorer].mean()
 
+
 # TODO class imbalance fix
 # TODO feature importance analysis
 # TODO save most stuff locally instead of wandb
-#FIXME: Improve what is logged to wandb: hyper-param tuning is only showing last one. ...
+# FIXME: Improve what is logged to wandb: hyper-param tuning is only showing last one. ...
 def main(
     what: str,
     config_script: str,
     *,
     study: str | list[str],
-    summary_type: str,
-    pipeline_version: str,
-    label_col: str,
-    positive_class_label: str,
+    summary_type: str | None = None,
+    pipeline_version: str | None = None,
+    label_col: str | None = None,
+    positive_class_label: str | None = None,
     metdata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
 ):
@@ -156,13 +157,13 @@ def main(
     Args:
         what: This decided what dataset is ran.
         config_script: The path to the config script
-        study: 
+        study:
             For mgnify: Leave out if all studies desired; if provided, only the summaries of
                 those studies are used if studies are given, they have to contain the desired
                 summary given by study download_label_start. For now only one study is supported.
-            For others: Give the study name that will give the right data. E.g. for sun et al. 
+            For others: Give the study name that will give the right data. E.g. for sun et al.
                 give the Project_1 term desired so the right samples are selected.
-        summary_type: Indicates what summary file to use for the studies.
+        summary_type: Required with mgnify. Indicates what summary file to use for the studies.
             Possible values:
                 - GO_abundances
                 - GO-slim_abundances
@@ -170,14 +171,14 @@ def main(
                 - taxonomy_abundances_SSU
                 - IPR_abundances
                 - ... (see MGnify API for more)
-        pipeline_version: Indicates what pipeline version to use.
+        pipeline_version: Required with mgnify. Indicates what pipeline version to use.
             Possible values:
                 - v3.0
                 - v4.0
                 - v4.1
                 - v5.0
-        label_col: Label column for classification.
-        positive_class_label: Positive class label to be used in label encoding.
+        label_col: Required with mgnify. Label column for classification.
+        positive_class_label: Required with mgnify. Positive class label to be used in label encoding.
         metdata_cols_to_use_as_features: Metadata columns to use; leave empty for none, or give value "all" for all columns.
         load_from_cache_if_available: This will reuse cross-validation splits if this same experiment has been done before.
             Note: This is not implemented yet.
@@ -210,17 +211,30 @@ def main(
     # Set up file logging
     logger_path = get_run_dir_for_experiment(misc_config) / "log.log"
     logger.add(logger_path, colorize=True, level="DEBUG")
-    logger.info("Starting with it all")
+    logger.info("Setting up everything")
 
     job_id = os.getenv("SLURM_JOB_ID")
     wandb_base_tags = [
         "d_" + str(study),
-        "s_" + summary_type,
-        "p_" + pipeline_version,
         "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
-        "l_" + label_col,
         "j_" + job_id if job_id else "j_local",
     ]
+
+    if what == "mgnify":
+        assert (
+            summary_type is not None
+            and pipeline_version is not None
+            and label_col is not None
+        ), "For mgnify, summary_type, pipeline_version and label_col must be provided as arguments."
+
+        wandb_base_tags.append("w_mgnify")
+        wandb_base_tags.append("s_" + summary_type)
+        wandb_base_tags.append("p_" + pipeline_version)
+        wandb_base_tags.append("l_" + label_col)
+    elif what == "sun et al":
+        wandb_base_tags.append("w_sun_et_al")
+    else:
+        raise ValueError("Invalid value for 'what'")
 
     # Initialize wandb if enabled
     if use_wandb:
