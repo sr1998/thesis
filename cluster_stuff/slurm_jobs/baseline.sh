@@ -1,16 +1,16 @@
 #!/bin/sh
-#SBATCH --job-name="data_getter"
-#SBATCH --partition="insy" # Request partition.
-#SBATCH --qos=medium                # This is how you specify QoS
-#SBATCH --time=12:00:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --job-name="sun_et_al_baseline"
+#SBATCH --partition=general,insy # Request partition.
+#SBATCH --qos=short                # This is how you specify QoS
+#SBATCH --time=00:30:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
 #SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
 #SBATCH --mem=1GB                  # Request ... GB of RAM in total
 #SBATCH --gpus-per-task=0
-#SBATCH --output=slurm-%x-%j.out   # Set name of output log. %j is the Slurm jobId
-#SBATCH --error=slurm-%x-%j.err    # Set name of error log. %j is the Slurm jobId
+#SBATCH --output=slurm_logs/%x-%j.out   # Set name of output log. %j is the Slurm jobId
+#SBATCH --error=slurm_logs/%x-%j.err    # Set name of error log. %j is the Slurm jobId
 
 # If you use DATASETS_ROOT inside your script otherwise remove
 # export DATASETS_ROOT="/scratch/$USER/datasets"
@@ -38,14 +38,16 @@ srun apptainer exec \
     --env-file $HOME/.env \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main \
-    --config_script "run_configs.simple_lightgbm_baseline_for_optuna" \
-    --study_accessions ["MGYS00005285"] \
-    --summary_type "GO_abundances" \
-    --pipeline_version "v4.1" \
-    --label_col "phenotype" \
-    --positive_class_label "Diabetes Mellitus, Type 2"
+    --what "sun et al" \
+    --config_script "run_configs.rf_baseline_for_sun_et_al" \
+    --study "HanL_2021"\
+    # --summary_type "taxonomy_abundances_SSU" \
+    # --pipeline_version "v4.1" \
+    # --label_col "disease status__biosamples" \
+    # --positive_class_label "Sick"
 #   -B /projects/:/projects/ \
 #   -B /scratch/$USER:/scratch/$USER \
+
 
 # --nv binds NVIDIA libraries from the host (only if you use CUDA)
 # --env-file source additional environment variables from e.g. .env file (optional)

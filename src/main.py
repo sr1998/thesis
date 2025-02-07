@@ -36,6 +36,9 @@ def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
             preprocessor__feature_space_change=preprocessor__feature_space_change
         )
 
+    if not trial_config.get("model__bootstrap", False):
+        trial_config["model__oob_score"] = False
+
     if trial_config.get("model__oob_score", False):
         trial_config["model__oob_score"] = get_scorer(
             trial_config["model__oob_score"]
