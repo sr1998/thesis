@@ -20,20 +20,21 @@ from src.helper_function import (
 )
 
 
-def get_pipeline(standard_pipeline, search_space_sampler, optuna_trial):
+def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
     trial_config = search_space_sampler(optuna_trial)
 
-    n_neighbors = trial_config["preprocessor__feature_space_change__n_neighbors"]
-    preprocessor__feature_space_change = SelectPercentile(
-        lambda X, y: mutual_info_classif(
-            X, y, n_neighbors=n_neighbors, discrete_features=False
-        ),
-        percentile=trial_config["preprocessor__feature_space_change__percentile"],
-    )
+    if what == "mgnify":
+        n_neighbors = trial_config["preprocessor__feature_space_change__n_neighbors"]
+        preprocessor__feature_space_change = SelectPercentile(
+            lambda X, y: mutual_info_classif(
+                X, y, n_neighbors=n_neighbors, discrete_features=False
+            ),
+            percentile=trial_config["preprocessor__feature_space_change__percentile"],
+        )
 
-    standard_pipeline = standard_pipeline.set_params(
-        preprocessor__feature_space_change=preprocessor__feature_space_change
-    )
+        standard_pipeline = standard_pipeline.set_params(
+            preprocessor__feature_space_change=preprocessor__feature_space_change
+        )
 
     if trial_config.get("model__oob_score", False):
         trial_config["model__oob_score"] = get_scorer(
@@ -265,13 +266,7 @@ def main(
             metdata_cols_to_use_as_features,
         )
     elif what == "sun et al":
-        data, labels = get_sun_et_al_data(
-            study,
-            summary_type,
-            pipeline_version,
-            label_col,
-            metdata_cols_to_use_as_features,
-        )
+        data, labels = get_sun_et_al_data(study)
     else:
         raise ValueError("Invalid value for 'what'")
 
