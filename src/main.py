@@ -82,9 +82,7 @@ def get_sun_et_al_data(study: str):
 
     # Filter metadata to only include the study of interest
     metadata = metadata[metadata["Project_1"] == study]
-    # Filter data to only include samples that are in the metadata
     metadata = metadata.set_index("Sample")
-    # Filter data to only include samples that are in the metadata
     labels = metadata["Group"]
 
     # Filter data to only include samples that are in the metadata
@@ -94,6 +92,7 @@ def get_sun_et_al_data(study: str):
 
 
 def hyp_param_eval_with_cv(
+    what,
     data,
     labels,
     cv,
@@ -104,7 +103,7 @@ def hyp_param_eval_with_cv(
     search_space_sampler,
     trial_config,
 ):
-    pipeline = get_pipeline(standard_pipeline, search_space_sampler, trial_config)
+    pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial_config)
 
     logger.info("pipeline:")
     print(pipeline)
@@ -324,6 +323,7 @@ def main(
         )
         optuna_study.optimize(
             lambda trial: hyp_param_eval_with_cv(
+                what,
                 X_train,
                 y_train,
                 inner_cv,
@@ -338,7 +338,7 @@ def main(
         )
 
         best_trial = optuna_study.best_trial
-        best_model = get_pipeline(standard_pipeline, search_space_sampler, best_trial)
+        best_model = get_pipeline(what, standard_pipeline, search_space_sampler, best_trial)
         best_model.fit(X_train, y_train)
 
         train_outer_cv_score = get_scores(
