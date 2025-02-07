@@ -18,7 +18,7 @@ class NumpyReplace(TransformerMixin, BaseEstimator):
 def total_sum_scaling(df: pd.DataFrame) -> pd.DataFrame:
     """Total sum scaling of a dataframe.
 
-    Normalizes the dataframe by the sum of each row.
+    Normalizes the rows of the dataframe by the sum of each row.
 
     Args:
         df: The dataframe to normalize.

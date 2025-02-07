@@ -47,8 +47,7 @@ def get_pipeline(standard_pipeline, search_space_sampler, optuna_trial):
     return standard_pipeline
 
 
-def get_data(
-    base_data_dir: str,
+def get_mgnify_data(
     study_accessions: str | list[str] | None,
     summary_type: str,
     pipeline_version: str,
@@ -59,13 +58,36 @@ def get_data(
         study_accessions = [study_accessions]
 
     data, labels = load_data(
-        base_data_dir,
+        BASE_DATA_DIR,
         study_accessions,
         summary_type,
         pipeline_version,
         metdata_cols_to_use_as_features,
         label_col,
     )
+
+    return data, labels
+
+
+def get_sun_et_al_data(study: str):
+    data = pd.read_csv(
+        BASE_DATA_DIR / "sun_et_al_data" / "mpa4_species_profile_preprocessed.csv",
+        index_col=0,
+        header=0,
+    )
+    metadata = pd.read_csv(
+        BASE_DATA_DIR / "sun_et_al_data" / "sample_group_preprocessed.csv", header=0
+    )
+
+    # Filter metadata to only include the study of interest
+    metadata = metadata[metadata["Project_1"] == study]
+    # Filter data to only include samples that are in the metadata
+    metadata = metadata.set_index("Sample")
+    # Filter data to only include samples that are in the metadata
+    labels = metadata["Group"]
+
+    # Filter data to only include samples that are in the metadata
+    data = data.loc[labels.index]
 
     return data, labels
 
@@ -98,12 +120,12 @@ def hyp_param_eval_with_cv(
 
     cross_val_res_dict = {
         **{
-            k.replace("train_", "train/"): np.mean(v)
+            k.replace("train_", "mean_inner_cv_train/"): np.mean(v)
             for k, v in cross_val_results.items()
             if "train" in k
         },
         **{
-            k.replace("test_", "val/"): np.mean(v)
+            k.replace("test_", "mean_inner_cv_val/"): np.mean(v)
             for k, v in cross_val_results.items()
             if "test" in k
         },
@@ -118,9 +140,10 @@ def hyp_param_eval_with_cv(
 # TODO save most stuff locally instead of wandb
 #FIXME: Improve what is logged to wandb: hyper-param tuning is only showing last one. ...
 def main(
+    what: str,
     config_script: str,
     *,
-    study_accessions: str | list[str],
+    study: str | list[str],
     summary_type: str,
     pipeline_version: str,
     label_col: str,
@@ -131,10 +154,14 @@ def main(
     """Run the pipeline for the given study accessions and config script.
 
     Args:
+        what: This decided what dataset is ran.
         config_script: The path to the config script
-        study_accessions: Leave out if all studies desired; if provided, only the summaries of
-            those studies are used if studies are given, they have to contain the desired
-            summary given by study download_label_start. For now only one study is supported.
+        study: 
+            For mgnify: Leave out if all studies desired; if provided, only the summaries of
+                those studies are used if studies are given, they have to contain the desired
+                summary given by study download_label_start. For now only one study is supported.
+            For others: Give the study name that will give the right data. E.g. for sun et al. 
+                give the Project_1 term desired so the right samples are selected.
         summary_type: Indicates what summary file to use for the studies.
             Possible values:
                 - GO_abundances
@@ -187,7 +214,7 @@ def main(
 
     job_id = os.getenv("SLURM_JOB_ID")
     wandb_base_tags = [
-        "d_" + str(study_accessions),
+        "d_" + str(study),
         "s_" + summary_type,
         "p_" + pipeline_version,
         "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
@@ -215,14 +242,24 @@ def main(
     logger.success("wandb init done")
 
     # Load data
-    data, labels = get_data(
-        BASE_DATA_DIR,
-        study_accessions,
-        summary_type,
-        pipeline_version,
-        label_col,
-        metdata_cols_to_use_as_features,
-    )
+    if what == "mgnify":
+        data, labels = get_mgnify_data(
+            study,
+            summary_type,
+            pipeline_version,
+            label_col,
+            metdata_cols_to_use_as_features,
+        )
+    elif what == "sun et al":
+        data, labels = get_sun_et_al_data(
+            study,
+            summary_type,
+            pipeline_version,
+            label_col,
+            metdata_cols_to_use_as_features,
+        )
+    else:
+        raise ValueError("Invalid value for 'what'")
 
     logger.success("Data obtained")
 
@@ -241,7 +278,6 @@ def main(
     )
 
     # Encode labels. Make sure the positive class is labeled as 1
-
     label_preprocessor.fit(labels)
     classes = list(label_preprocessor.classes_)
     if positive_class_label in classes:

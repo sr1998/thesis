@@ -12,7 +12,7 @@ from sklearn.model_selection import ShuffleSplit
 from sklearn.pipeline import FunctionTransformer
 from sklearn.preprocessing import Normalizer
 
-from run_configs.predefined_hyp_param_search_space import (
+from run_configs.deprecated.predefined_hyp_param_search_spaceearch_space import (
     get_rf_search_space,
     select_percentile_search_space,
     umap_search_space,

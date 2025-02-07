@@ -3,15 +3,18 @@ import os
 from typing import Iterable
 
 import numpy as np
+import optuna
 import pandas as pd
 import plotly.graph_objects as go
-from joblib import Memory
 from loguru import logger
+from numpy.random import RandomState
 from requests import Session as requests_session
 from sklearn.base import BaseEstimator
 from sklearn.metrics import get_scorer
 from sklearn.pipeline import Pipeline
 
+import wandb
+from joblib import Memory
 from src.global_vars import (
     BASE_RUN_DIR,
     HTTP_ADAPTER_FOR_REQUESTS,
@@ -130,7 +133,9 @@ def get_scores(
                     y_model = y_pred
                     scoring_function._response_method = "predict"
 
-                if y_n_unique == 2 and y_pred is not None:  # [:, 1] needed somewhere, but this seems to work and [:, 0] does not
+                if (
+                    y_n_unique == 2 and y_pred is not None
+                ):  # [:, 1] needed somewhere, but this seems to work and [:, 0] does not
                     scores[train_or_test + "/" + score_name] = scoring_function(
                         y, y_model, **kwargs
                     )
@@ -173,7 +178,7 @@ def plotly_bar_plot_with_error_bars(df: pd.DataFrame, title: str) -> go.Figure:
         xaxis_title="Metric",
         yaxis_title="Mean Value",
         barmode="group",
-        template="plotly_white"
+        template="plotly_white",
     )
 
     return fig
@@ -198,6 +203,6 @@ def circular_slice(arr: Iterable, start: int, end: int) -> Iterable:
     n = len(arr)
     if n == 0:
         return np.array([])  # Handle empty array case
-    
+
     indices = np.arange(start, end) % n  # Compute wrapped indices
     return arr[indices]  # Direct NumPy indexing
