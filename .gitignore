@@ -12,6 +12,9 @@ slurm-*.err
 slurm-*.out
 cluster_stuff/tmp/ray/
 *.sif
+*.csv
+*.json
+*.tsv
 
 
 # Byte-compiled / optimized / DLL files
