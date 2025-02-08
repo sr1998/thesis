@@ -239,6 +239,9 @@ def main(
     else:
         raise ValueError("Invalid value for 'what'")
 
+    wandb_name = f"w_{what}__d_{study}__j_{job_id}"
+    wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
+
     # Initialize wandb if enabled
     if use_wandb:
         wandb.init(
@@ -246,6 +249,7 @@ def main(
             config=setup,
             **wandb_params,
             tags=wandb_base_tags,
+            name=wandb_name,
         )
     else:
         wandb.init(
@@ -254,6 +258,7 @@ def main(
             config=setup,
             **wandb_params,
             tags=wandb_base_tags,
+            name=wandb_name,
         )
 
     logger.success("wandb init done")
