@@ -25,7 +25,6 @@ def get_setup():
         "wandb_params": {
             "project": "thesis_baselines",
             "group": "RF",  # model name can be useful here
-            "name": "RF_baseline",
         },
         "verbose_pipeline": True,  # whether to print verbose output from the pipeline
         "cache_pipeline_steps": False,  # True giving errors
@@ -67,8 +66,7 @@ def get_setup():
 
     score_functions = {
         "accuracy": "accuracy",
-        "f1(_binary)": "f1",
-        "f1_macro": "f1_macro",
+        "f1": "f1",
         # "f1_micro": "f1_micro",
         # "f1_weighted": "f1_weighted",
         "roc_auc(_macro)": "roc_auc",
@@ -82,15 +80,13 @@ def get_setup():
         #     average_precision_score, average="weighted"
         # ),
         "precision(_binary)": "precision",
-        "precision_macro": "precision_macro",
         # "precision_micro": "precision_micro",
         # "precision_weighted": "precision_weighted",
         "recall(_binary)": "recall",
         # "recall_micro": "recall_micro",
-        "recall_macro": "recall_macro",
         # "recall_weighted": "recall_weighted",
     }
-    best_fit_scorer = "f1_macro"
+    best_fit_scorer = "f1"
     tuning_mode = "maximize"  # "maximize" or "minimize"
 
     def search_space_sampler(optuna_trial):
