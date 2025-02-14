@@ -6,3 +6,4 @@ From: apptainer-for-thesis.sif
     pip install --upgrade pip
     pip install optuna
     pip show optuna
+    pip3 install torch torchvision torchaudio
