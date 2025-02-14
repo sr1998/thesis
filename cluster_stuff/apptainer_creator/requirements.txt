@@ -17,6 +17,7 @@ seaborn
 # arfs
 ray[tune]
 optuna
+torch
 
 # # eda
 # umap-learn

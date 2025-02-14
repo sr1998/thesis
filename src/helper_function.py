@@ -1,5 +1,6 @@
 import hashlib
 import os
+from random import randint
 from typing import Iterable
 
 import numpy as np
@@ -12,6 +13,7 @@ from requests import Session as requests_session
 from sklearn.base import BaseEstimator
 from sklearn.metrics import get_scorer
 from sklearn.pipeline import Pipeline
+from torch import Tensor
 
 import wandb
 from joblib import Memory
@@ -206,3 +208,17 @@ def circular_slice(arr: Iterable, start: int, end: int) -> Iterable:
 
     indices = np.arange(start, end) % n  # Compute wrapped indices
     return arr[indices]  # Direct NumPy indexing
+
+
+def metalearning_binary_target_changer(labels: Tensor) -> Tensor:
+    """Change the binary labels randomly.
+
+    Args:
+        labels: The binary labels to change.
+
+    Returns:
+        The changed binary labels.
+    """
+    to_change = randint(0, 1)
+    labels = (labels + to_change) % 2
+    return labels
