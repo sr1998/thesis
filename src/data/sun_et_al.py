@@ -112,9 +112,9 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
         self.include_query = include_query or not training  # Always include query set for validation/testing
         self.shuffle = shuffle
         self.shuffle_once = shuffle_once
-        self.batch_size = self.k_shot * 2  # 2 classes
-        if self.include_query:
-            self.batch_size *= 2
+        # self.batch_size = self.k_shot * 2  # 2 classes
+        # if self.include_query:
+        #     self.batch_size *= 2
 
         self.dataset = dataset
         self.groups = list(dataset.group_to_label_idx_per_class.keys())

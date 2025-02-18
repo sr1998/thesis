@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
 
 import traceback
+
 import torch
+from torch import nn
 from torch.autograd import grad
 
 
-from torch import nn
-
-
-def accuracy(predictions, targets):
-    predictions = (predictions > 0).float().view(targets.shape)
-    # predictions = predictions.argmax(dim=1).view(targets.shape)
-    return (predictions == targets).sum().float() / targets.size(0)
-
-
-def fast_adapt(X_support, y_support, X_query, y_query, learner, loss, adaptation_steps):
-
+def fast_adapt(
+    X_support,
+    y_support,
+    X_query,
+    y_query,
+    learner,
+    loss,
+    adaptation_steps,
+    initial_lr: int = 0.5,
+    inner_rl_reduction_factor: int = 1.5,
+):
+    learner.lr = initial_lr
     # Adapt the model
     for step in range(adaptation_steps):
         adaptation_error = loss(learner(X_support).squeeze(), y_support)
         learner.adapt(adaptation_error)
+        learner.lr = learner.lr * inner_rl_reduction_factor
 
-    # Evaluate the adapted model
+    # Predict on the query set
     predictions = learner(X_query).squeeze()
-    evaluation_error = loss(predictions, y_query)
-    evaluation_accuracy = accuracy(predictions, y_query)
-    return evaluation_error, evaluation_accuracy
+    return predictions
 
 
 class BaseLearner(nn.Module):
@@ -37,15 +39,14 @@ class BaseLearner(nn.Module):
         try:
             return super(BaseLearner, self).__getattr__(attr)
         except AttributeError:
-            return getattr(self.__dict__['_modules']['module'], attr)
+            return getattr(self.__dict__["_modules"]["module"], attr)
 
     def forward(self, *args, **kwargs):
         return self.module(*args, **kwargs)
 
 
 def update_module(module, updates=None, memo=None):
-    r"""
-    [[Source]](https://github.com/learnables/learn2learn/blob/master/learn2learn/utils.py)
+    r"""[[Source]](https://github.com/learnables/learn2learn/blob/master/learn2learn/utils.py).
 
     **Description**
 
@@ -81,8 +82,8 @@ def update_module(module, updates=None, memo=None):
     if updates is not None:
         params = list(module.parameters())
         if not len(updates) == len(list(params)):
-            msg = 'WARNING:update_module(): Parameters and updates have different length. ('
-            msg += str(len(params)) + ' vs ' + str(len(updates)) + ')'
+            msg = "WARNING:update_module(): Parameters and updates have different length. ("
+            msg += str(len(params)) + " vs " + str(len(updates)) + ")"
             print(msg)
         for p, g in zip(params, updates):
             p.update = g
@@ -93,7 +94,7 @@ def update_module(module, updates=None, memo=None):
         if p in memo:
             module._parameters[param_key] = memo[p]
         else:
-            if p is not None and hasattr(p, 'update') and p.update is not None:
+            if p is not None and hasattr(p, "update") and p.update is not None:
                 updated = p + p.update
                 p.update = None
                 memo[p] = updated
@@ -105,7 +106,7 @@ def update_module(module, updates=None, memo=None):
         if buff in memo:
             module._buffers[buffer_key] = memo[buff]
         else:
-            if buff is not None and hasattr(buff, 'update') and buff.update is not None:
+            if buff is not None and hasattr(buff, "update") and buff.update is not None:
                 updated = buff + buff.update
                 buff.update = None
                 memo[buff] = updated
@@ -122,14 +123,13 @@ def update_module(module, updates=None, memo=None):
     # Finally, rebuild the flattened parameters for RNNs
     # See this issue for more details:
     # https://github.com/learnables/learn2learn/issues/139
-    if hasattr(module, 'flatten_parameters'):
+    if hasattr(module, "flatten_parameters"):
         module._apply(lambda x: x)
     return module
 
-def clone_module(module, memo=None):
-    """
 
-    [[Source]](https://github.com/learnables/learn2learn/blob/master/learn2learn/utils.py)
+def clone_module(module, memo=None):
+    r"""[[Source]](https://github.com/learnables/learn2learn/blob/master/learn2learn/utils.py).
 
     **Description**
 
@@ -184,7 +184,7 @@ def clone_module(module, memo=None):
     clone._modules = clone._modules.copy()
 
     # Second, re-write all parameters
-    if hasattr(clone, '_parameters'):
+    if hasattr(clone, "_parameters"):
         for param_key in module._parameters:
             if module._parameters[param_key] is not None:
                 param = module._parameters[param_key]
@@ -197,10 +197,12 @@ def clone_module(module, memo=None):
                     memo[param_ptr] = cloned
 
     # Third, handle the buffers if necessary
-    if hasattr(clone, '_buffers'):
+    if hasattr(clone, "_buffers"):
         for buffer_key in module._buffers:
-            if clone._buffers[buffer_key] is not None and \
-                    clone._buffers[buffer_key].requires_grad:
+            if (
+                clone._buffers[buffer_key] is not None
+                and clone._buffers[buffer_key].requires_grad
+            ):
                 buff = module._buffers[buffer_key]
                 buff_ptr = buff.data_ptr
                 if buff_ptr in memo:
@@ -211,7 +213,7 @@ def clone_module(module, memo=None):
                     memo[buff_ptr] = cloned
 
     # Then, recurse for each submodule
-    if hasattr(clone, '_modules'):
+    if hasattr(clone, "_modules"):
         for module_key in clone._modules:
             clone._modules[module_key] = clone_module(
                 module._modules[module_key],
@@ -221,15 +223,13 @@ def clone_module(module, memo=None):
     # Finally, rebuild the flattened parameters for RNNs
     # See this issue for more details:
     # https://github.com/learnables/learn2learn/issues/139
-    if hasattr(clone, 'flatten_parameters'):
+    if hasattr(clone, "flatten_parameters"):
         clone = clone._apply(lambda x: x)
     return clone
 
 
-
 def maml_update(model, lr, grads=None):
-    """
-    [[Source]](https://github.com/learnables/learn2learn/blob/master/learn2learn/algorithms/maml.py)
+    r"""[[Source]](https://github.com/learnables/learn2learn/blob/master/learn2learn/algorithms/maml.py).
 
     **Description**
 
@@ -258,18 +258,17 @@ def maml_update(model, lr, grads=None):
     if grads is not None:
         params = list(model.parameters())
         if not len(grads) == len(list(params)):
-            msg = 'WARNING:maml_update(): Parameters and gradients have different length. ('
-            msg += str(len(params)) + ' vs ' + str(len(grads)) + ')'
+            msg = "WARNING:maml_update(): Parameters and gradients have different length. ("
+            msg += str(len(params)) + " vs " + str(len(grads)) + ")"
             print(msg)
         for p, g in zip(params, grads):
             if g is not None:
-                p.update = - lr * g
+                p.update = -lr * g
     return update_module(model)
 
 
 class MAML(BaseLearner):
-    """
-    [[Source]](https://github.com/learnables/learn2learn/blob/master/learn2learn/algorithms/maml.py)
+    r"""[[Source]](https://github.com/learnables/learn2learn/blob/master/learn2learn/algorithms/maml.py).
 
     **Description**
 
@@ -308,12 +307,9 @@ class MAML(BaseLearner):
     ~~~
     """
 
-    def __init__(self,
-                 model,
-                 lr,
-                 first_order=False,
-                 allow_unused=None,
-                 allow_nograd=False):
+    def __init__(
+        self, model, lr, first_order=False, allow_unused=None, allow_nograd=False
+    ):
         super(MAML, self).__init__()
         self.module = model
         self.lr = lr
@@ -326,13 +322,8 @@ class MAML(BaseLearner):
     def forward(self, *args, **kwargs):
         return self.module(*args, **kwargs)
 
-    def adapt(self,
-              loss,
-              first_order=None,
-              allow_unused=None,
-              allow_nograd=None):
-        """
-        **Description**
+    def adapt(self, loss, first_order=None, allow_unused=None, allow_nograd=None):
+        """**Description**.
 
         Takes a gradient step on the loss and updates the cloned parameters in place.
 
@@ -358,11 +349,13 @@ class MAML(BaseLearner):
         if allow_nograd:
             # Compute relevant gradients
             diff_params = [p for p in self.module.parameters() if p.requires_grad]
-            grad_params = grad(loss,
-                               diff_params,
-                               retain_graph=second_order,
-                               create_graph=second_order,
-                               allow_unused=allow_unused)
+            grad_params = grad(
+                loss,
+                diff_params,
+                retain_graph=second_order,
+                create_graph=second_order,
+                allow_unused=allow_unused,
+            )
             gradients = []
             grad_counter = 0
 
@@ -376,21 +369,24 @@ class MAML(BaseLearner):
                 gradients.append(gradient)
         else:
             try:
-                gradients = grad(loss,
-                                 self.module.parameters(),
-                                 retain_graph=second_order,
-                                 create_graph=second_order,
-                                 allow_unused=allow_unused)
+                gradients = grad(
+                    loss,
+                    self.module.parameters(),
+                    retain_graph=second_order,
+                    create_graph=second_order,
+                    allow_unused=allow_unused,
+                )
             except RuntimeError:
                 traceback.print_exc()
-                print('learn2learn: Maybe try with allow_nograd=True and/or allow_unused=True ?')
+                print(
+                    "learn2learn: Maybe try with allow_nograd=True and/or allow_unused=True ?"
+                )
 
         # Update the module
         self.module = maml_update(self.module, self.lr, gradients)
 
     def clone(self, first_order=None, allow_unused=None, allow_nograd=None):
-        """
-        **Description**
+        """**Description**.
 
         Returns a `MAML`-wrapped copy of the module whose parameters and buffers
         are `torch.clone`d from the original module.
@@ -415,8 +411,10 @@ class MAML(BaseLearner):
             allow_unused = self.allow_unused
         if allow_nograd is None:
             allow_nograd = self.allow_nograd
-        return MAML(clone_module(self.module),
-                    lr=self.lr,
-                    first_order=first_order,
-                    allow_unused=allow_unused,
-                    allow_nograd=allow_nograd)
+        return MAML(
+            clone_module(self.module),
+            lr=self.lr,
+            first_order=first_order,
+            allow_unused=allow_unused,
+            allow_nograd=allow_nograd,
+        )

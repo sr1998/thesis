@@ -222,3 +222,7 @@ def metalearning_binary_target_changer(labels: Tensor) -> Tensor:
     to_change = randint(0, 1)
     labels = (labels + to_change) % 2
     return labels
+
+def set_learning_rate(optimizer, lr):
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = lr

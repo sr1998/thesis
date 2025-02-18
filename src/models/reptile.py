@@ -232,7 +232,7 @@
 from copy import deepcopy
 
 from loguru import logger
-from torch import Tensor, nn, no_grad, zeros_like
+from torch import nn, no_grad, zeros_like
 from torch import device as torch_device
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import SGD, Adam, Optimizer
@@ -240,40 +240,6 @@ from torch.utils.data import DataLoader
 
 import wandb
 from src.helper_function import metalearning_binary_target_changer
-
-
-class Model(nn.Module):
-    def __init__(
-        self,
-        n_input: int
-        # nodes_per_layer: list[int],
-        # activations_per_layer: list[nn.Module],
-    ):
-        super().__init__()
-        # All layers should have an activation
-        # assert len(nodes_per_layer) - 1 == len(activations_per_layer)
-
-        # Create neural net
-        # self.layers = []
-        # self.layers.append()
-        # for i in range(len(nodes_per_layer) - 1):
-        #     self.layers.append(nn.Linear(nodes_per_layer[i], nodes_per_layer[i + 1]))
-        #     self.layers.append(activations_per_layer[i])
-
-        self.layers = nn.Sequential(
-            nn.Linear(n_input, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(512, 128),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(128, 1),  # Output layer for binary classification
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        return self.layers(x)
 
 
 class Reptile:  # Assumes binary classifier for now

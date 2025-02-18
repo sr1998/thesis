@@ -1,35 +1,23 @@
-import sys
-
-sys.path.append("../..")
-
-import pandas as pd
-from loguru import logger
-
-import src.preprocessing.functions as preprocessing_functions
-from src.global_vars import BASE_DATA_DIR
-
-data_root_dir = f"{BASE_DATA_DIR}/sun_et_al_data/"
-columns_to_keep = ["Sample", "Group", "Project", "Project_1"]
-studies_to_remove = ["LiS_2021a", "LiS_2021b"]
-
 import os
 import sys
+from importlib import import_module
 
-sys.path.append("../../")
+sys.path.append(".")
 
+import pandas as pd
 import torch
+from loguru import logger
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import Normalizer
 from torch import nn
 from torch.optim import SGD, Adam
 from torch.utils.data import DataLoader
-import pandas as pd
-from sklearn.decomposition import PCA
 
 import src.data.sun_et_al as hf
 import src.models.maml as maml
 import src.models.reptile as rp
 import wandb
-
-from umap import UMAP
+from src.global_vars import BASE_DATA_DIR
 
 
 def get_studies_desired_from_sun_et_al(
@@ -83,46 +71,81 @@ def split_sun_et_al_data(data: pd.DataFrame, metadata: pd.DataFrame, test, val):
     return train_data, test_data, val_data, train_metadata, test_metadata, val_metadata
 
 
-def change_sun_et_al_metadata_for_metalearning(metadata: pd.DataFrame) -> pd.DataFrame:
+def column_rename_for_sun_et_al_metadata(metadata: pd.DataFrame) -> pd.DataFrame:
     metadata = metadata[["Group", "Project_1"]]
     metadata = metadata.rename(columns={"Group": "label", "Project_1": "project"})
     return metadata
 
 
+def pca_reduction(
+    train_data,
+    test_data,
+    val_data,
+    n_components_reduction_factor: int,
+    use_cache: bool = False,
+):
+    if not use_cache:
+        pca = PCA(
+            n_components=int(train_data.shape[1] // n_components_reduction_factor)
+        )
+        print("fitting and transforming")
+        train_data = pd.DataFrame(pca.fit_transform(train_data), index=train_data.index)
+        print("transforming")
+        test_data = pd.DataFrame(pca.transform(test_data), index=test_data.index)
+        print("transforming")
+        val_data = pd.DataFrame(pca.transform(val_data), index=val_data.index)
+        train_data.to_csv("train_data_PCA.csv")
+        test_data.to_csv("test_data_PCA.csv")
+        val_data.to_csv("val_data_PCA.csv")
+    else:
+        train_data = pd.read_csv("train_data_PCA.csv", index_col=0)
+        test_data = pd.read_csv("test_data_PCA.csv", index_col=0)
+        val_data = pd.read_csv("val_data_PCA.csv", index_col=0)
+
+    return train_data, test_data, val_data
+
+
 def main(
-    sun_et_al_abundance: pd.DataFrame,
-    sun_et_al_metadata: pd.DataFrame,
-    config_script: str,
+    model_script: str,
+    model_name: str,
+    abundance_file: pd.DataFrame,
+    metadata_file: pd.DataFrame,
     test_study: list,
     val_study: list,
-    outer_lr_range=(0.5, 0.01),
-    inner_lr_range=(0.5, 0.01),
-    loss_fn=nn.BCELoss(),
-    n_gradient_steps=5,
-    n_parallel_tasks=5,
-    n_epochs=10,
-    k_shot=30,
+    outer_lr_range: tuple[float, float],
+    inner_lr_range: tuple[float, float],
+    n_gradient_steps: int,
+    n_parallel_tasks: int,
+    n_epochs: int,
+    train_k_shot: int,
+    eval_k_shot: int = None,
+    n_components_reduction_factor: int = 0,  # 0 or 1 for no PCA at all
+    use_cached_pca: bool = False,
+    do_normalization_before_scaling: bool = True,
+    scale_factor_before_training: int = 100,
+    loss_fn: str = "BCELog",
+    use_wandb: bool = True,
 ):
-    # config_module = import_module(config_script)
-    # setup = config_module.get_setup()
-    # (
-    #     misc_config,
-    #     outer_cv_config,
-    #     inner_cv_config,
-    #     standard_pipeline,
-    #     label_preprocessor,
-    #     scoring,
-    #     best_fit_scorer,
-    #     tuning_mode,
-    #     search_space_sampler,
-    #     tuning_num_samples,
-    # ) = setup.values()
-    setup = ""
-    wandb_params = {}
+    if loss_fn == "BCELog":
+        loss_fn = nn.BCEWithLogitsLoss()
+    else:
+        raise ValueError("Loss function not recognized.")
 
-    # use_wandb = misc_config["wandb"]
-    use_wandb = False
-    # wandb_params = misc_config["wandb_params"]
+    data_root_dir = f"{BASE_DATA_DIR}/sun_et_al_data/"
+
+    sun_et_al_abundance = pd.read_csv(
+        f"{data_root_dir}/{abundance_file}",
+        index_col=0,
+        header=0,
+    )
+
+    sun_et_al_metadata = pd.read_csv(
+        f"{data_root_dir}/{metadata_file}",
+        index_col=0,
+        header=0,
+    )
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # Set up file logging
     # logger_path = get_run_dir_for_experiment(misc_config) / "log.log"
@@ -130,33 +153,60 @@ def main(
     # logger.info("Setting up everything")
 
     job_id = os.getenv("SLURM_JOB_ID")
+    tax_level = abundance_file.split("_")[1]
+    config = {
+        "model_script": model_script,
+        "model_name": model_name,
+        "abundance_file": abundance_file,
+        "metadata_file": metadata_file,
+        "test_study": test_study,
+        "val_study": val_study,
+        "outer_lr_range": outer_lr_range,
+        "inner_lr_range": inner_lr_range,
+        "n_gradient_steps": n_gradient_steps,
+        "n_parallel_tasks": n_parallel_tasks,
+        "n_epochs": n_epochs,
+        "train_k_shot": train_k_shot,
+        "eval_k_shot": eval_k_shot,
+        "n_components_reduction_factor": n_components_reduction_factor,
+        "use_cache_pca": use_cached_pca,
+        "do_normalization_before_scaling": do_normalization_before_scaling,
+        "scale_factor_before_training": scale_factor_before_training,
+        "loss_fn": loss_fn,
+        "use_wandb": use_wandb,
+        "device": device,
+        "job_id": job_id,
+    }
     wandb_base_tags = [
-        "test_s" + str(test_study),
-        "val_s" + str(val_study),
-        "m_" + "Reptile",
+        "t_s" + str(test_study),
+        "v_s" + str(val_study),
+        "m_" + model_name,
         "j_" + job_id if job_id else "j_local",
+        "tax_" + tax_level,
+        "t_k" + str(train_k_shot),
+        "e_k" + str(eval_k_shot),
     ]
+
+    wand_name = f"W{model_name}_TS{test_study}_VS{val_study}_J{job_id}_TAX{tax_level}_TK{train_k_shot}_EK{eval_k_shot if eval_k_shot else train_k_shot}"
 
     # Initialize wandb if enabled
     if use_wandb:
         wandb.init(
-            notes=str(setup),
-            config=setup,
-            **wandb_params,
+            project="meta-learning",
+            name=wand_name,
+            config=config,
+            group="MAML",
             tags=wandb_base_tags,
         )
     else:
         wandb.init(
+            name=wand_name,
             mode="disabled",
-            notes=str(setup),
-            config=setup,
-            **wandb_params,
+            config=config,
+            project="meta-learning",
+            group="MAML",
             tags=wandb_base_tags,
         )
-
-    logger.success("wandb init done")
-
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     sun_et_al_metadata = sun_et_al_metadata.sort_index()
     sun_et_al_abundance = sun_et_al_abundance.sort_index()
@@ -167,72 +217,98 @@ def main(
         )
     )
 
-    # U-map dimensionality reduction
-    # umapper = UMAP(n_components=int(sun_et_al_abundance.shape[1]//1.5), n_neighbors=int(sun_et_al_abundance.shape[0]//1000), min_dist=0.1, metric="euclidean")
-    # print("fitting and transforming")
-    # train_data = pd.DataFrame(umapper.fit_transform(train_data), index=train_data.index, columns=train_data.columns)
-    # train_data.to_csv("train_data.csv")
-    # print('transforming')
-    # test_data = pd.DataFrame(umapper.transform(test_data), index=test_data.index, columns=test_data.columns)
-    # test_data.to_csv("test_data.csv")
-    # print('transforming')
-    # val_data = pd.DataFrame(umapper.transform(val_data), index=val_data.index, columns=val_data.columns)
-    # val_data.to_csv("val_data.csv")
+    if n_components_reduction_factor != 0 and n_components_reduction_factor != 1:
+        train_data, test_data, val_data = pca_reduction(
+            train_data, test_data, val_data, use_cache=use_cached_pca
+        )
 
-    # PCA
-    pca = PCA(n_components=int(sun_et_al_abundance.shape[1]//20))
-    print("fitting and transforming")
-    train_data = pd.DataFrame(pca.fit_transform(train_data), index=train_data.index)
-    print("transforming")
-    test_data = pd.DataFrame(pca.transform(test_data), index=test_data.index)
-    print("transforming")
-    val_data = pd.DataFrame(pca.transform(val_data), index=val_data.index)
-    # train_data.to_csv("train_data_PCA.csv")
-    # test_data.to_csv("test_data_PCA.csv")
-    # val_data.to_csv("val_data_PCA.csv")
-    
-    # train_data = pd.read_csv("train_data_PCA.csv", index_col=0)
-    # test_data = pd.read_csv("test_data_PCA.csv", index_col=0)
-    # val_data = pd.read_csv("val_data_PCA.csv", index_col=0)
+    # tts
+    # train_data = preprocessing_functions.total_sum_scaling(train_data)
+    # test_data = preprocessing_functions.total_sum_scaling(test_data)
+    # val_data = preprocessing_functions.total_sum_scaling(val_data)
+
+    # centered log ratio transform
+    # replace_zero_with = train_data[train_data > 0].min().min() / 100
+    # train_data = preprocessing_functions.centered_log_ratio(
+    #     train_data, replace_zero_with=replace_zero_with
+    # )
+    # test_data = preprocessing_functions.centered_log_ratio(
+    #     test_data, replace_zero_with=replace_zero_with
+    # )
+    # val_data = preprocessing_functions.centered_log_ratio(
+    #     val_data, replace_zero_with=replace_zero_with
+    # )
 
     # normalize the data for deep learning
-    from sklearn.preprocessing import Normalizer
-    train_data = pd.DataFrame(Normalizer().fit_transform(train_data * 1000), index=train_data.index)
-    test_data = pd.DataFrame(Normalizer().fit_transform(test_data * 1000), index=test_data.index)
-    val_data = pd.DataFrame(Normalizer().fit_transform(val_data * 1000), index=val_data.index)
+    if do_normalization_before_scaling:
+        train_data = pd.DataFrame(
+            Normalizer().fit_transform(train_data),
+            index=train_data.index,
+            columns=train_data.columns,
+        )
+        if test_study:
+            test_data = pd.DataFrame(
+                Normalizer().fit_transform(test_data),
+                index=test_data.index,
+                columns=test_data.columns,
+            )
+        val_data = pd.DataFrame(
+            Normalizer().fit_transform(val_data),
+            index=val_data.index,
+            columns=val_data.columns,
+        )
 
-    train_metadata = change_sun_et_al_metadata_for_metalearning(train_metadata)
-    test_metadata = change_sun_et_al_metadata_for_metalearning(test_metadata)
-    val_metadata = change_sun_et_al_metadata_for_metalearning(val_metadata)
+    train_data = train_data * scale_factor_before_training
+    test_data = test_data * scale_factor_before_training
+    val_data = val_data * scale_factor_before_training
 
+    train_metadata = column_rename_for_sun_et_al_metadata(train_metadata)
+    test_metadata = column_rename_for_sun_et_al_metadata(test_metadata)
+    val_metadata = column_rename_for_sun_et_al_metadata(val_metadata)
+
+    # Create Datasets for DataLoader
     train = hf.MicrobiomeDataset(train_data, train_metadata)
     test = hf.MicrobiomeDataset(test_data, test_metadata)
     val = hf.MicrobiomeDataset(val_data, val_metadata)
 
+    # Create DataLoaders
     sampler = hf.BinaryFewShotBatchSampler(
-        train, k_shot, include_query=True, shuffle=True
+        train, train_k_shot, include_query=True, shuffle=True
     )
     train_loader = DataLoader(train, batch_sampler=sampler)
 
+    if eval_k_shot is None:
+        eval_k_shot = train_k_shot
+
     sampler = hf.BinaryFewShotBatchSampler(
-        test, k_shot, include_query=True, shuffle=False, shuffle_once = False, training=False
+        test,
+        eval_k_shot,
+        include_query=True,
+        shuffle=False,
+        shuffle_once=False,
+        training=False,
     )
     test_loader = DataLoader(test, batch_sampler=sampler)
 
     sampler = hf.BinaryFewShotBatchSampler(
-        val, k_shot, include_query=True, shuffle=False, shuffle_once = False, training=False
+        val,
+        eval_k_shot,
+        include_query=True,
+        shuffle=False,
+        shuffle_once=False,
+        training=False,
     )
     val_loader = DataLoader(val, batch_sampler=sampler)
 
+    # Get model
+    model_module = import_module(model_script)
     n_features = train_data.shape[1]
     assert (
         n_features == test_data.shape[1] == val_data.shape[1]
     ), "Number of features of train, test and val must be the same."
 
     # Simple model to test
-    model = rp.Model(n_features).to(device)
-
-    meta_optimizer = SGD(model.parameters(), lr=max(outer_lr_range))
+    model = model_module.get_model(model_name)(n_features).to(device)
 
     # Instantiate the Reptile meta-learner.
     # reptile = rp.Reptile(
@@ -261,36 +337,38 @@ def main(
         train_n_gradient_steps=n_gradient_steps,
         eval_n_gradient_steps=n_gradient_steps,
         device=device,
-        meta_optimizer=meta_optimizer,
         inner_lr_range=inner_lr_range,
         outer_lr_range=outer_lr_range,
-        k_shot=k_shot,
+        k_shot=train_k_shot,
+        loss_fn=loss_fn,
     )
 
-    MAML.fit(train_dataloader=train_loader, n_epochs=n_epochs, n_parallel_tasks=n_parallel_tasks, evaluate_train=True, val_dataloader=val_loader)
+    MAML.fit(
+        train_dataloader=train_loader,
+        n_epochs=n_epochs,
+        n_parallel_tasks=n_parallel_tasks,
+        evaluate_train=True,
+        val_dataloader=val_loader,
+    )
+
 
 if __name__ == "__main__":
-    sun_et_al_abundance = pd.read_csv(
-    f"{data_root_dir}/mpa4_species_profile_preprocessed.csv",
-    index_col=0,
-    header=0,
-    )
-
-    sun_et_al_metadata = pd.read_csv(
-        f"{data_root_dir}/sample_group_preprocessed.csv",
-        index_col=0,
-        header=0,
-    )
-
     main(
-    sun_et_al_abundance,
-    sun_et_al_metadata,
-    None,
-    "HanL_2021",
-    "JieZ_2017",
-    outer_lr_range=(1, 0.00001),
-    inner_lr_range=(0.5, 0.00001),
-    k_shot=10,
-    n_gradient_steps=5,
-    n_epochs=1000,
-)
+        "src.models.models",
+        "model2",
+        "mpa4_species_profile_preprocessed.csv",
+        "sample_group_preprocessed.csv",
+        "",
+        "JieZ_2017",
+        outer_lr_range=(1, 0.01),
+        inner_lr_range=(0.5, 0.00001),
+        n_epochs=3,
+        train_k_shot=10,
+        n_gradient_steps=2,
+        n_parallel_tasks=3,
+        n_components_reduction_factor=0,
+        use_cached_pca=False,
+        do_normalization_before_scaling=True,
+        scale_factor_before_training=100,
+        loss_fn="BCELog",
+    )

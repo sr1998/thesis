@@ -46,6 +46,24 @@ def centered_arcsine_transform(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def centered_log_ratio(df: pd.DataFrame, replace_zero_with: float) -> pd.DataFrame:
+    """Centered log ratio transform of a dataframe.
+
+    Assumes that the dataframe contains proportions of some kind, i.e. values in [0, 1].
+    """
+    df = df.replace(0, replace_zero_with)
+    # make sure that the sum of each row is 1
+    row_sums = df.sum(axis=1)
+    df = df.div(row_sums, axis=0)
+    # log transform
+    df_vals = df.to_numpy()
+    df_vals = np.log(df_vals)
+    # center the data
+    df_vals = df_vals - df_vals.mean(axis=1).reshape(-1, 1)
+    df = pd.DataFrame(df_vals, index=df.index, columns=df.columns)
+    return df
+
+
 def pandas_label_encoder(df: pd.DataFrame) -> pd.DataFrame:
     """Encode the labels of a dataframe. All columns of type "object" are encoded.
 
