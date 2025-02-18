@@ -75,14 +75,14 @@ def get_mgnify_data(
     return data, labels
 
 
-def get_sun_et_al_data(study: str):
+def get_sun_et_al_data(study: str, tax_level: str):
     data = pd.read_csv(
-        BASE_DATA_DIR / "sun_et_al_data" / "mpa4_species_profile_preprocessed.csv",
+        BASE_DATA_DIR / "sun_et_al_data" / f"mpa4_{tax_level}_profile_preprocessed.csv",
         index_col=0,
         header=0,
     )
     metadata = pd.read_csv(
-        BASE_DATA_DIR / "sun_et_al_data" / "sample_group_preprocessed.csv", header=0
+        BASE_DATA_DIR / "sun_et_al_data" / f"sample_group_{tax_level}_preprocessed.csv", header=0
     )
 
     # Filter metadata to only include the study of interest
@@ -150,6 +150,7 @@ def main(
     config_script: str,
     *,
     study: str | list[str],
+    tax_level: str, # For sun et al for now
     summary_type: str | None = None,
     pipeline_version: str | None = None,
     label_col: str | None = None,
@@ -193,6 +194,9 @@ def main(
         None
 
     """
+    if tax_level not in ["species", "genus"]:
+        raise ValueError("Invalid value for 'tax_level'")
+
     config_module = import_module(config_script)
     setup = config_module.get_setup()
     (
@@ -276,7 +280,7 @@ def main(
             metdata_cols_to_use_as_features,
         )
     elif what == "sun et al":
-        data, labels = get_sun_et_al_data(study)
+        data, labels = get_sun_et_al_data(study, tax_level)
     else:
         raise ValueError("Invalid value for 'what'")
 
@@ -352,6 +356,7 @@ def main(
         best_trial = optuna_study.best_trial
         # save best trial parameters + split for this loop
         best_trial_params = best_trial.params
+        best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
         # Convert to a dictionary format for easier table storage
         split_entry = {
             "outer_cv_split": i,
