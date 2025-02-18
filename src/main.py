@@ -1,6 +1,7 @@
 import os
-from importlib import import_module
 import sys
+from importlib import import_module
+
 sys.path.append(".")
 import fire
 import numpy as np
@@ -74,14 +75,14 @@ def get_mgnify_data(
     return data, labels
 
 
-def get_sun_et_al_data(study: str):
+def get_sun_et_al_data(study: str, tax_level: str):
     data = pd.read_csv(
-        BASE_DATA_DIR / "sun_et_al_data" / "mpa4_species_profile_preprocessed.csv",
+        BASE_DATA_DIR / "sun_et_al_data" / f"mpa4_{tax_level}_profile_preprocessed.csv",
         index_col=0,
         header=0,
     )
     metadata = pd.read_csv(
-        BASE_DATA_DIR / "sun_et_al_data" / "sample_group_preprocessed.csv", header=0
+        BASE_DATA_DIR / "sun_et_al_data" / f"sample_group_{tax_level}_preprocessed.csv", header=0
     )
 
     # Filter metadata to only include the study of interest
@@ -149,6 +150,7 @@ def main(
     config_script: str,
     *,
     study: str | list[str],
+    tax_level: str, # For sun et al for now
     summary_type: str | None = None,
     pipeline_version: str | None = None,
     label_col: str | None = None,
@@ -192,6 +194,9 @@ def main(
         None
 
     """
+    if tax_level not in ["species", "genus"]:
+        raise ValueError("Invalid value for 'tax_level'")
+
     config_module = import_module(config_script)
     setup = config_module.get_setup()
     (
@@ -213,7 +218,9 @@ def main(
 
     # get misc config parameters
     use_wandb = misc_config["wandb"]
-    misc_config["wandb_params"]["name"] = wandb_name    # Not nice to change the config like this, better to use name directly
+    misc_config["wandb_params"]["name"] = (
+        wandb_name  # Not nice to change the config like this, better to use name directly
+    )
     wandb_params = misc_config["wandb_params"]
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
@@ -273,7 +280,7 @@ def main(
             metdata_cols_to_use_as_features,
         )
     elif what == "sun et al":
-        data, labels = get_sun_et_al_data(study)
+        data, labels = get_sun_et_al_data(study, tax_level)
     else:
         raise ValueError("Invalid value for 'what'")
 
@@ -313,6 +320,7 @@ def main(
     outer_cv = outer_cv_config["type"](**outer_cv_config["params"])
 
     logger.info("Starting with outer cv")
+    split_results = []
 
     for i, (train_index, test_index) in enumerate(outer_cv.split(data, encoded_labels)):
         # outer cv data split
@@ -346,7 +354,26 @@ def main(
         )
 
         best_trial = optuna_study.best_trial
-        best_model = get_pipeline(what, standard_pipeline, search_space_sampler, best_trial)
+        # save best trial parameters + split for this loop
+        best_trial_params = best_trial.params
+        best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+        # Convert to a dictionary format for easier table storage
+        split_entry = {
+            "outer_cv_split": i,
+            "train_size": len(train_index),
+            "test_size": len(test_index),
+            **best_trial_params,  # Add all hyperparameters
+            "train_indices": ";".join(
+                map(str, train_index)
+            ),  # Store indices as a semicolon-separated string
+            "test_indices": ";".join(map(str, test_index)),
+        }
+
+        split_results.append(split_entry)
+
+        best_model = get_pipeline(
+            what, standard_pipeline, search_space_sampler, best_trial
+        )
         best_model.fit(X_train, y_train)
 
         train_outer_cv_score = get_scores(
@@ -433,6 +460,13 @@ def main(
         {"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)},
         step=i + 1,
     )
+
+    results_df = pd.DataFrame(split_results)
+    results_path = get_run_dir_for_experiment(misc_config) / "outer_cv_results.csv"
+    results_df.to_csv(results_path, index=False)
+    wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
+    logger.success(f"Saved all outer CV splits and best trial parameters to {results_path} and wandb.")
+
 
     # NOT WORKING
     # # Use WandB's plotting capabilities to create bar plots
