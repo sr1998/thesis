@@ -1,6 +1,7 @@
 import os
 from importlib import import_module
-
+import sys
+sys.path.append(".")
 import fire
 import numpy as np
 import optuna
@@ -206,8 +207,13 @@ def main(
         tuning_num_samples,
     ) = setup.values()
 
+    job_id = os.getenv("SLURM_JOB_ID")
+    wandb_name = f"w_{what}__d_{study}__j_{job_id}"
+    wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
+
     # get misc config parameters
     use_wandb = misc_config["wandb"]
+    misc_config["wandb_params"]["name"] = wandb_name    # Not nice to change the config like this, better to use name directly
     wandb_params = misc_config["wandb_params"]
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
@@ -216,7 +222,6 @@ def main(
     logger.add(logger_path, colorize=True, level="DEBUG")
     logger.info("Setting up everything")
 
-    job_id = os.getenv("SLURM_JOB_ID")
     wandb_base_tags = [
         "d_" + str(study),
         "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
@@ -238,10 +243,6 @@ def main(
         wandb_base_tags.append("w_sun_et_al")
     else:
         raise ValueError("Invalid value for 'what'")
-
-    wandb_name = f"w_{what}__d_{study}__j_{job_id}"
-    wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
-    wandb_params.update({"name": wandb_name})   # 
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -462,8 +463,9 @@ if __name__ == "__main__":
     fire.Fire(main)
 
     # main(
+    #     "mgnify",
     #     "run_configs.simple_rf_baseline_for_optuna",
-    #     study_accessions=["MGYS00003677"],
+    #     study=["MGYS00003677"],
     #     summary_type="GO_abundances",
     #     pipeline_version="v4.1",
     #     label_col="disease status__biosamples",
