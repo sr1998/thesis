@@ -207,6 +207,7 @@ def main(
         tuning_num_samples,
     ) = setup.values()
 
+    job_id = os.getenv("SLURM_JOB_ID")
     wandb_name = f"w_{what}__d_{study}__j_{job_id}"
     wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
 
@@ -221,7 +222,6 @@ def main(
     logger.add(logger_path, colorize=True, level="DEBUG")
     logger.info("Setting up everything")
 
-    job_id = os.getenv("SLURM_JOB_ID")
     wandb_base_tags = [
         "d_" + str(study),
         "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
