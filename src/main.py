@@ -2,6 +2,8 @@ import os
 import sys
 from importlib import import_module
 
+from sklearn.inspection import permutation_importance
+
 sys.path.append(".")
 import fire
 import numpy as np
@@ -82,7 +84,8 @@ def get_sun_et_al_data(study: str, tax_level: str):
         header=0,
     )
     metadata = pd.read_csv(
-        BASE_DATA_DIR / "sun_et_al_data" / f"sample_group_{tax_level}_preprocessed.csv", header=0
+        BASE_DATA_DIR / "sun_et_al_data" / f"sample_group_{tax_level}_preprocessed.csv",
+        header=0,
     )
 
     # Filter metadata to only include the study of interest
@@ -142,7 +145,6 @@ def hyp_param_eval_with_cv(
 
 
 # TODO class imbalance fix
-# TODO feature importance analysis
 # TODO save most stuff locally instead of wandb
 # FIXME: Improve what is logged to wandb: hyper-param tuning is only showing last one. ...
 def main(
@@ -150,12 +152,12 @@ def main(
     config_script: str,
     *,
     study: str | list[str],
-    tax_level: str, # For sun et al for now
+    tax_level: str,  # For sun et al for now
     summary_type: str | None = None,
     pipeline_version: str | None = None,
     label_col: str | None = None,
     positive_class_label: str | None = None,
-    metdata_cols_to_use_as_features: list[str] = [],
+    metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
 ):
     """Run the pipeline for the given study accessions and config script.
@@ -185,7 +187,7 @@ def main(
                 - v5.0
         label_col: Required with mgnify. Label column for classification.
         positive_class_label: Required with mgnify. Positive class label to be used in label encoding.
-        metdata_cols_to_use_as_features: Metadata columns to use; leave empty for none, or give value "all" for all columns.
+        metadata_cols_to_use_as_features: Metadata columns to use; leave empty for none, or give value "all" for all columns.
         load_from_cache_if_available: This will reuse cross-validation splits if this same experiment has been done before.
             Note: This is not implemented yet.
         wandb_run_name: The name of the wandb run. Defaults to None.
@@ -212,8 +214,18 @@ def main(
         tuning_num_samples,
     ) = setup.values()
 
+    setup["what"] = what
+    setup["study"] = study
+    setup["tax_level"] = tax_level
+    if what == "mgnify":
+        setup["summary_type"] = summary_type
+        setup["pipeline_version"] = pipeline_version
+        setup["label_col"] = label_col
+    setup["positive_class_label"] = positive_class_label
+    setup["metdata_cols_to_use_as_features"] = metadata_cols_to_use_as_features
+
     job_id = os.getenv("SLURM_JOB_ID")
-    wandb_name = f"w_{what}__d_{study}__j_{job_id}"
+    wandb_name = f"w_{what}__d_{study}__j_{job_id}__t_{tax_level}"
     wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
 
     # get misc config parameters
@@ -233,6 +245,7 @@ def main(
         "d_" + str(study),
         "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
         "j_" + job_id if job_id else "j_local",
+        "t_" + tax_level,
     ]
 
     if what == "mgnify":
@@ -277,7 +290,7 @@ def main(
             summary_type,
             pipeline_version,
             label_col,
-            metdata_cols_to_use_as_features,
+            metadata_cols_to_use_as_features,
         )
     elif what == "sun et al":
         data, labels = get_sun_et_al_data(study, tax_level)
@@ -321,6 +334,8 @@ def main(
 
     logger.info("Starting with outer cv")
     split_results = []
+    split_permutation_importance = pd.DataFrame()
+    split_rf_importance_df = pd.DataFrame()
 
     for i, (train_index, test_index) in enumerate(outer_cv.split(data, encoded_labels)):
         # outer cv data split
@@ -383,6 +398,43 @@ def main(
             best_model, X_test, y_test, scoring, train_or_test="test"
         )
 
+        # Permutation importance
+        perm_importance = permutation_importance(
+            best_model,
+            X_test,
+            y_test,
+            scoring=best_fit_scorer,
+            n_repeats=5,
+            random_state=i,
+        )
+        perm_importance_df = pd.DataFrame(
+            {
+                "Feature": X_train.columns,
+                "Importance": perm_importance.importances_mean,  # Mean importance over repeats
+                "Std": perm_importance.importances_std,  # Standard deviation
+                "Outer CV Split": i,
+            }
+        )
+        split_permutation_importance = pd.concat(
+            [split_permutation_importance, perm_importance_df], axis=0
+        )
+
+        # Random Forest feature importance
+        if hasattr(best_model.named_steps["model"], "feature_importances_"):
+            rf_importance = best_model.named_steps["model"].feature_importances_
+
+            rf_importance_df = pd.DataFrame(
+                {
+                    "Feature": X_train.columns,
+                    "RF Importance": rf_importance,
+                    "Outer CV Split": i,
+                }
+            )
+
+            split_rf_importance_df = pd.concat(
+                [split_rf_importance_df, rf_importance_df], axis=0
+            )
+
         wandb.log(
             {"Outer fold": dict(train_outer_cv_score, **test_outer_cv_score)},
             step=i,
@@ -391,47 +443,6 @@ def main(
         # tuner_results.append(tuner_cv_result)
         train_scores.append(train_outer_cv_score)
         test_scores.append(test_outer_cv_score)
-
-        # # feature importance plot wandb
-        # if hasattr(best_model.named_steps["model"], "feature_importances_"):
-        #     feature_importances = best_model.named_steps["model"].feature_importances_
-        #     print(feature_importances)
-        #     feature_importances_df = pd.DataFrame(feature_importances, index=X_train.columns, columns=["Importance"])
-
-        #     # Log all features
-        #     # wandb.log(
-        #     #     {
-        #     #         f"Feature Importance (All) @ outer cv split {i}": wandb.plot.bar(
-        #     #             wandb.Table(dataframe=feature_importances_df),
-        #     #             "Feature",
-        #     #             "Importance",
-        #     #             title=f"Feature Importance (All) @ outer cv split {i}",
-        #     #         )
-        #     #     },
-        #     #     step=i,
-        #     # )
-
-        #     # Log top 5 and bottom 5 features
-        #     sorted_feature_importances_df = feature_importances_df.sort_values(
-        #         by="Importance", ascending=False
-        #     )
-        #     best_and_worst_features = pd.concat(
-        #         [
-        #             sorted_feature_importances_df.head(5),
-        #             sorted_feature_importances_df.tail(5),
-        #         ]
-        #     )
-        #     wandb.log(
-        #         {
-        #             f"Feature Importance (Top 5 and Bottom 5) @ outer cv split {i}": wandb.plot.bar(
-        #                 wandb.Table(dataframe=best_and_worst_features),
-        #                 "Feature",
-        #                 "Importance",
-        #                 title=f"Feature Importance (Top 5 and Bottom 5) @ outer cv split {i}",
-        #             )
-        #         },
-        #         step=i,
-        #     )
 
     # log mean and std of the results
     train_scores = pd.DataFrame(train_scores)
@@ -461,33 +472,30 @@ def main(
         step=i + 1,
     )
 
+    # Save all outer CV splits and best trial parameters
     results_df = pd.DataFrame(split_results)
     results_path = get_run_dir_for_experiment(misc_config) / "outer_cv_results.csv"
     results_df.to_csv(results_path, index=False)
     wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
-    logger.success(f"Saved all outer CV splits and best trial parameters to {results_path} and wandb.")
+    logger.success(
+        f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
+    )
 
+    # Save permutation importance
+    perm_importance_path = (
+        get_run_dir_for_experiment(misc_config) / "permutation_importance.csv"
+    )
+    split_permutation_importance.to_csv(perm_importance_path, index=False)
+    wandb.log(
+        {"Permutation Feature Imp": wandb.Table(dataframe=split_permutation_importance)}
+    )
 
-    # NOT WORKING
-    # # Use WandB's plotting capabilities to create bar plots
-    # wandb.log(
-    #     {
-    #         "Train Metrics Summary": wandb.plot.bar(
-    #             wandb.Table(dataframe=train_summary_df),
-    #             "Metric",
-    #             "Mean",
-    #             title="Train Metrics Summary",
-    #             error_y="Std",
-    #         ),
-    #         "Test Metrics Summary": wandb.plot.bar(
-    #             wandb.Table(dataframe=test_summary_df),
-    #             "Metric",
-    #             "Mean",
-    #             title="Test Metrics Summary",
-    #             error_y="Std",
-    #         ),
-    #     }
-    # )
+    # Save RF feature importance
+    feature_importance_path = (
+        get_run_dir_for_experiment(misc_config) / "feature_importance.csv"
+    )
+    split_rf_importance_df.to_csv(feature_importance_path, index=False)
+    wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
 
     logger.success("Done!")
     wandb.finish()
