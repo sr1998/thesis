@@ -334,7 +334,7 @@ def main(
 
     logger.info("Starting with outer cv")
     split_results = []
-    split_permutation_importance = pd.DataFrame()
+    # split_permutation_importance = pd.DataFrame()
     split_rf_importance_df = pd.DataFrame()
 
     for i, (train_index, test_index) in enumerate(outer_cv.split(data, encoded_labels)):
@@ -398,26 +398,26 @@ def main(
             best_model, X_test, y_test, scoring, train_or_test="test"
         )
 
-        # Permutation importance
-        perm_importance = permutation_importance(
-            best_model,
-            X_test,
-            y_test,
-            scoring=best_fit_scorer,
-            n_repeats=5,
-            random_state=i,
-        )
-        perm_importance_df = pd.DataFrame(
-            {
-                "Feature": X_train.columns,
-                "Importance": perm_importance.importances_mean,  # Mean importance over repeats
-                "Std": perm_importance.importances_std,  # Standard deviation
-                "Outer CV Split": i,
-            }
-        )
-        split_permutation_importance = pd.concat(
-            [split_permutation_importance, perm_importance_df], axis=0
-        )
+        # Permutation importance (all zero. I guess due to correlation of features)
+        # perm_importance = permutation_importance(
+        #     best_model,
+        #     X_test,
+        #     y_test,
+        #     scoring=best_fit_scorer,
+        #     n_repeats=5,
+        #     random_state=i,
+        # )
+        # perm_importance_df = pd.DataFrame(
+        #     {
+        #         "Feature": X_train.columns,
+        #         "Importance": perm_importance.importances_mean,  # Mean importance over repeats
+        #         "Std": perm_importance.importances_std,  # Standard deviation
+        #         "Outer CV Split": i,
+        #     }
+        # )
+        # split_permutation_importance = pd.concat(
+        #     [split_permutation_importance, perm_importance_df], axis=0
+        # )
 
         # Random Forest feature importance
         if hasattr(best_model.named_steps["model"], "feature_importances_"):
@@ -482,13 +482,13 @@ def main(
     )
 
     # Save permutation importance
-    perm_importance_path = (
-        get_run_dir_for_experiment(misc_config) / "permutation_importance.csv"
-    )
-    split_permutation_importance.to_csv(perm_importance_path, index=False)
-    wandb.log(
-        {"Permutation Feature Imp": wandb.Table(dataframe=split_permutation_importance)}
-    )
+    # perm_importance_path = (
+    #     get_run_dir_for_experiment(misc_config) / "permutation_importance.csv"
+    # )
+    # split_permutation_importance.to_csv(perm_importance_path, index=False)
+    # wandb.log(
+    #     {"Permutation Feature Imp": wandb.Table(dataframe=split_permutation_importance)}
+    # )
 
     # Save RF feature importance
     feature_importance_path = (
@@ -496,6 +496,20 @@ def main(
     )
     split_rf_importance_df.to_csv(feature_importance_path, index=False)
     wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
+
+    # mean importance of outer runs
+    mean_rf_importance = split_rf_importance_df.groupby("Feature").mean()
+    mean_rf_importance = mean_rf_importance.sort_values("RF Importance", ascending=False)
+    mean_rf_importance = mean_rf_importance.reset_index()
+    mean_rf_importance = mean_rf_importance.drop("Outer CV Split", axis=1)
+    wandb.log(
+        {"Mean RF Feature Imp": wandb.Table(dataframe=mean_rf_importance)},
+        step=i + 1,
+    )
+    mean_feature_importance_path = (
+        get_run_dir_for_experiment(misc_config) / "mean_feature_importance.csv"
+    )
+    mean_rf_importance.to_csv(mean_feature_importance_path, index=False)
 
     logger.success("Done!")
     wandb.finish()
@@ -507,6 +521,7 @@ if __name__ == "__main__":
     # main(
     #     "mgnify",
     #     "run_configs.simple_rf_baseline_for_optuna",
+    #     tax_level="species",
     #     study=["MGYS00003677"],
     #     summary_type="GO_abundances",
     #     pipeline_version="v4.1",

@@ -24,8 +24,11 @@ STUDIES=(
 )
 STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
-LOG_FILE="slurm_logs/${SLURM_JOB_NAME}-${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.out"
-ERR_FILE="slurm_logs/${SLURM_JOB_NAME}-${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.err"
+mkdir "slurm_logs/${SLURM_JOB_NAME}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${STUDY}"
+
+LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.out"
+ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.err"
 
 # Redirect stdout and stderr to these files
 exec > "$LOG_FILE" 2> "$ERR_FILE"

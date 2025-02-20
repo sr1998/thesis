@@ -19,6 +19,12 @@
 export APPTAINER_ROOT="/tudelft.net/staff-umbrella/abeellabstudents/sramezani"
 export APPTAINER_NAME="apptainer-for-thesis.sif"
 
+mkdir "slurm_logs/${SLURM_JOB_NAME}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${STUDY}"
+
+LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_JOB_ID}-${STUDY}.out"
+ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_JOB_ID}-${STUDY}.err"
+
 # for WANDB to work
 curl https://curl.se/ca/cacert.pem -o ./cacert.pem
 export SSL_CERT_FILE=./cacert.pem
