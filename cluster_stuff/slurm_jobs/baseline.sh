@@ -40,8 +40,9 @@ exec > "$LOG_FILE" 2> "$ERR_FILE"
 # export DATASETS_ROOT="/scratch/$USER/datasets"
 
 # Assuming you have a dedicated directory for *.sif files
-export APPTAINER_ROOT="/tudelft.net/staff-umbrella/abeellabstudents/sramezani/new_apptainer"
-export APPTAINER_NAME="extended_image.sif"
+export APPTAINER_ROOT="/tudelft.net/staff-umbrella/abeellabstudents/sramezani"
+export APPTAINER_NAME="apptainer-for-thesis.sif"
+
 
 # for WANDB to work
 curl https://curl.se/ca/cacert.pem -o ./cacert.pem

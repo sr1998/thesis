@@ -217,6 +217,7 @@ def main(
     setup["what"] = what
     setup["study"] = study
     setup["tax_level"] = tax_level
+    setup["model"] = standard_pipeline.named_steps["model"].__class__.__name__
     if what == "mgnify":
         setup["summary_type"] = summary_type
         setup["pipeline_version"] = pipeline_version
@@ -316,7 +317,6 @@ def main(
     # Encode labels. Make sure the positive class is labeled as 1
     label_preprocessor.fit(labels)
     classes = list(label_preprocessor.classes_)
-    print(classes)
     if positive_class_label in classes:
         positive_class_index = classes.index(positive_class_label)
         if positive_class_index != 1:
@@ -326,10 +326,7 @@ def main(
                 classes[1],
             )
             label_preprocessor.classes_ = np.array(classes)
-    print(list(label_preprocessor.classes_))
     encoded_labels = label_preprocessor.transform(labels)
-    print(labels)
-    print(encoded_labels)
 
     train_scores = []
     test_scores = []
