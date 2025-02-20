@@ -498,19 +498,25 @@ def main(
     split_rf_importance_df.to_csv(feature_importance_path, index=False)
     wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
 
-    # mean importance of outer runs
-    mean_rf_importance = split_rf_importance_df.groupby("Feature").mean()
-    mean_rf_importance = mean_rf_importance.sort_values("RF Importance", ascending=False)
-    mean_rf_importance = mean_rf_importance.reset_index()
-    mean_rf_importance = mean_rf_importance.drop("Outer CV Split", axis=1)
+    # mean and std of importance of outer runs
+    rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
+    rf_importance_std = split_rf_importance_df.groupby("Feature").std()
+    
+    rf_importance_summary_df = pd.DataFrame(
+        {
+            "Feature": rf_importance_mean.index,
+            "Mean Importance": rf_importance_mean["RF Importance"],
+            "Std Importance": rf_importance_std["RF Importance"],
+        }
+    )
+
     wandb.log(
-        {"Mean RF Feature Imp": wandb.Table(dataframe=mean_rf_importance)},
-        step=i + 1,
+        {"RF Feature Importance Summary": wandb.Table(dataframe=rf_importance_summary_df)}
     )
-    mean_feature_importance_path = (
-        get_run_dir_for_experiment(misc_config) / "mean_feature_importance.csv"
+    importance_summary_path = (
+        get_run_dir_for_experiment(misc_config) / "feature_importance_summary.csv"
     )
-    mean_rf_importance.to_csv(mean_feature_importance_path, index=False)
+    rf_importance_summary_df.to_csv(importance_summary_path, index=False)
 
     logger.success("Done!")
     wandb.finish()
