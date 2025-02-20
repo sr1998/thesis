@@ -19,15 +19,15 @@ class Model1(nn.Module):
         #     self.layers.append(activations_per_layer[i])
 
         self.layers = nn.Sequential(
-            nn.Linear(n_input, 256),
-            nn.BatchNorm1d(256),
+            nn.Linear(n_input, 512),
+            nn.LayerNorm(512),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(256, 64),
-            nn.BatchNorm1d(64),
+            nn.Linear(512, 256),
+            nn.LayerNorm(256),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(64, 1),  # Output layer for binary classification
+            nn.Linear(256, 1),  # Output layer for binary classification
         )
 
     def forward(self, x: Tensor) -> Tensor:
@@ -55,11 +55,37 @@ class Model2(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self.layers(x)
     
+class Model3(nn.Module):
+    def __init__(
+        self,
+        n_input: int
+    ):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(n_input, 1024),
+            nn.LayerNorm(1024),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(1024, 512),
+            nn.LayerNorm(512),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(512, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Linear(64, 1),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.layers(x)
+    
     
 def get_model(model_name: str) -> nn.Module:
     if model_name == "model1":
         return Model1
     elif model_name == "model2":
         return Model2
+    elif model_name == "model3":
+        return Model3
     else:
         raise ValueError(f"Model {model_name} not found.")

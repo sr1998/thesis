@@ -1,27 +1,30 @@
 #!/bin/sh
 #SBATCH --job-name="sun_et_al_baseline"
 #SBATCH --partition=general,insy # Request partition.
-#SBATCH --qos=medium                # This is how you specify QoS
-#SBATCH --time=2:00:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --qos=short                # This is how you specify QoS
+#SBATCH --time=1:30:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
 #SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
 #SBATCH --mem=1GB                  # Request ... GB of RAM in total
 #SBATCH --gpus-per-task=0
-#SBATCH --output=slurm-%x-%A-%a.out   # Set name of output log. %j is the Slurm jobId
-#SBATCH --error=slurm-%x-%A-%a.err    # Set name of error log. %j is the Slurm jobId
 
-STUDIES=(
+
+STUDIES=('LuW_2018'
     'ChenB_2020' 'ChuY_2021' 'HeQ_2017' 'HuY_2019'
     'HuangR_2020' 'LiJ_2017' 'LiR_2021'
     'LiuP_2021' 'LiuR_2017' 'LuW_2018' 'MaoL_2021'
-    'QiX_2019' 'QianY_2020' 'QinJ_2012' 'QinN_2014' 'WanY_2021'
+    'QiX_2019' 'QianY_2020' 'QinN_2014' 'WanY_2021'
     'WangM_2019' 'WangX_2020' 'WengY_2019' 'YanQ_2017'
     'YangY_2021' 'YeZ_2018' 'YeZ_2020' 'YeohYK_2021' 'YuJ_2017'
     'ZhangX_2015' 'ZhongH_2019' 'ZhouC_2020' 'ZhuF_2020'
     'ZhuJ_2018' 'ZhuQ_2021' 'ZuoK_2019'
 )
+# 31
+
+# STUDIES=('JieZ_2017' 'WangQ_2021' 'ZengQ_2021' 'HanL_2021')
+# STUDIES=('QinJ_2012') 3:30
 STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
@@ -37,8 +40,8 @@ exec > "$LOG_FILE" 2> "$ERR_FILE"
 # export DATASETS_ROOT="/scratch/$USER/datasets"
 
 # Assuming you have a dedicated directory for *.sif files
-export APPTAINER_ROOT="/tudelft.net/staff-umbrella/abeellabstudents/sramezani"
-export APPTAINER_NAME="apptainer-for-thesis.sif"
+export APPTAINER_ROOT="/tudelft.net/staff-umbrella/abeellabstudents/sramezani/new_apptainer"
+export APPTAINER_NAME="extended_image.sif"
 
 # for WANDB to work
 curl https://curl.se/ca/cacert.pem -o ./cacert.pem
@@ -61,7 +64,8 @@ srun apptainer exec \
     python -m src.main \
     --what "sun et al" \
     --config_script "run_configs.rf_baseline_for_sun_et_al" \
-    --study "$STUDY"\
+    --tax_level "genus" \
+    --study "$STUDY" \
     --positive_class_label "Disease" \
 
 # srun apptainer exec \

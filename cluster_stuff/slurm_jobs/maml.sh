@@ -2,7 +2,7 @@
 #SBATCH --job-name="maml_base"
 #SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
-#SBATCH --time=02:00:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --time=01:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node

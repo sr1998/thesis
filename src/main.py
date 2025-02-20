@@ -316,6 +316,7 @@ def main(
     # Encode labels. Make sure the positive class is labeled as 1
     label_preprocessor.fit(labels)
     classes = list(label_preprocessor.classes_)
+    print(classes)
     if positive_class_label in classes:
         positive_class_index = classes.index(positive_class_label)
         if positive_class_index != 1:
@@ -325,7 +326,10 @@ def main(
                 classes[1],
             )
             label_preprocessor.classes_ = np.array(classes)
+    print(list(label_preprocessor.classes_))
     encoded_labels = label_preprocessor.transform(labels)
+    print(labels)
+    print(encoded_labels)
 
     train_scores = []
     test_scores = []
