@@ -159,8 +159,8 @@ def main(
     job_id = os.getenv("SLURM_JOB_ID")
     tax_level = abundance_file.split("_")[1]
     config = {
-        "model_script": model_script,
         "model_name": model_name,
+        "algorithm": algorithm,
         "abundance_file": abundance_file,
         "metadata_file": metadata_file,
         "test_study": test_study,
@@ -180,18 +180,21 @@ def main(
         "use_wandb": use_wandb,
         "device": device,
         "job_id": job_id,
+        "features_to_use": features_to_use,
+        "model_script": model_script,
     }
     wandb_base_tags = [
         "t_s" + str(test_study),
         "v_s" + str(val_study),
         "m_" + model_name,
+        "a_" + algorithm,
         "j_" + job_id if job_id else "j_local",
         "tax_" + tax_level,
         "t_k" + str(train_k_shot),
         "e_k" + str(eval_k_shot),
     ]
 
-    wand_name = f"w{model_name}_ts{test_study}_vs{val_study}_j{job_id}_tax{tax_level}_tk{train_k_shot}_ek{eval_k_shot}"
+    wand_name = f"{model_name}_{algorithm}_TS{test_study}_VS{val_study}_J{job_id}_T{tax_level}_TK{train_k_shot}_EK{eval_k_shot}"
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -199,7 +202,7 @@ def main(
             project="meta-learning",
             name=wand_name,
             config=config,
-            group="MAML",
+            group=algorithm,
             tags=wandb_base_tags,
         )
     else:
@@ -208,7 +211,7 @@ def main(
             mode="disabled",
             config=config,
             project="meta-learning",
-            group="MAML",
+            group=algorithm,
             tags=wandb_base_tags,
         )
 
