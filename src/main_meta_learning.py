@@ -351,6 +351,7 @@ def main(
             device=device,
             # loss_function=loss_fn,
             inner_lr=max(inner_lr_range),
+            inner_rl_reduction_factor=inner_rl_reduction_factor,
             outer_lr=max(outer_lr_range),
             k_shot=train_k_shot,
         )
