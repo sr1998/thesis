@@ -17,11 +17,12 @@
 export APPTAINER_ROOT="/tudelft.net/staff-umbrella/abeellabstudents/sramezani"
 export APPTAINER_NAME="apptainer-for-thesis.sif"
 
+ALGORITHM="MAML"
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}"
 
-LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_JOB_ID}-${STUDY}.out"
-LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_JOB_ID}.out"
-ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_JOB_ID}.err"
+LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${SLURM_JOB_ID}.out"
+ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${SLURM_JOB_ID}.err"
 
 # Redirect stdout and stderr to these files
 exec > "$LOG_FILE" 2> "$ERR_FILE"
@@ -66,7 +67,7 @@ srun apptainer exec \
     --do_normalization_before_scaling=True \
     --scale_factor_before_training=100 \
     --loss_fn="BCELog" \
-    --algorithm="MAML"
+    --algorithm="${ALGORITHM}" \
     # --what "sun et al" \
     # --config_script "run_configs.rf_baseline_for_sun_et_al" \
     # --study "JieZ_2017"\
