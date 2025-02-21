@@ -48,24 +48,24 @@ srun apptainer exec \
     --nv \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.maml_main \
-    --model_script "src.models.models" \
-    --model_name "model2" \
-    --abundance_file "mpa4_species_profile_preprocessed.csv" \
-    --metadata_file "sample_group_species_preprocessed.csv" \
-    --test_study "" \
-    --val_study "JieZ_2017" \
-    --outer_lr_range 1 1 \
-    --inner_lr_range 0.5 0.5 \
-    --inner_rl_reduction_factor 2 \
-    --n_epochs 500 \
-    --train_k_shot 10 \
-    --n_gradient_steps 5 \
-    --n_parallel_tasks 5 \
-    --n_components_reduction_factor 0 \
-    --use_cached_pca False \
-    --do_normalization_before_scaling True \
-    --scale_factor_before_training 100 \
-    --loss_fn "BCELog"
+    --model_script="src.models.models" \
+    --model_name="model2" \
+    --abundance_file="mpa4_species_profile_preprocessed.csv" \
+    --metadata_file="sample_group_species_preprocessed.csv" \
+    --test_study="" \
+    --val_study="JieZ_2017" \
+    --outer_lr_range="(1, 1)" \
+    --inner_lr_range="(0.5, 0.5)" \
+    --inner_rl_reduction_factor=2 \
+    --n_epochs=500 \
+    --train_k_shot=10 \
+    --n_gradient_steps=5 \
+    --n_parallel_tasks=5 \
+    --n_components_reduction_factor=0 \
+    --use_cached_pca=False \
+    --do_normalization_before_scaling=True \
+    --scale_factor_before_training=100 \
+    --loss_fn="BCELog"
     # --what "sun et al" \
     # --config_script "run_configs.rf_baseline_for_sun_et_al" \
     # --study "JieZ_2017"\
