@@ -259,12 +259,12 @@ class MAML:
         final_scores = compute_metrics(big_preds, big_targets)
         wandb.log(
             {
-                "train/loss": meta_test_error,
-                "train/accuracy": final_scores["accuracy"],
-                "train/f1": final_scores["f1"],
-                "train/precision": final_scores["precision"],
-                "train/recall": final_scores["recall"],
-                "train/roc_auc": final_scores["roc_auc"],
+                "val/loss": meta_test_error,
+                "val/accuracy": final_scores["accuracy"],
+                "val/f1": final_scores["f1"],
+                "val/precision": final_scores["precision"],
+                "val/recall": final_scores["recall"],
+                "val/roc_auc": final_scores["roc_auc"],
                 "epoch": epoch,
             },
         )
