@@ -23,7 +23,7 @@ def fast_adapt(
     for step in range(adaptation_steps):
         adaptation_error = loss(learner(X_support).squeeze(), y_support)
         learner.adapt(adaptation_error)
-        learner.lr = learner.lr * inner_rl_reduction_factor
+        learner.lr = learner.lr / inner_rl_reduction_factor
 
     # Predict on the query set
     predictions = learner(X_query).squeeze()

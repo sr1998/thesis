@@ -1,5 +1,6 @@
 from loguru import logger
 from torch import Tensor, nn, no_grad, tensor, zeros_like
+from torch import cat as torch_cat
 from torch import device as torch_device
 from torch.autograd import grad
 from torch.nn import BCEWithLogitsLoss
@@ -21,6 +22,7 @@ class MAML:
         eval_n_gradient_steps: int,
         device: torch_device,
         inner_lr_range: tuple[float, float],
+        inner_rl_reduction_factor: int = 1.5,
         outer_lr_range: tuple[float, float],
         k_shot: int,
         loss_fn: nn.Module = None,
@@ -37,6 +39,7 @@ class MAML:
         self.outer_lr_range = outer_lr_range
         self.outer_lr = max(outer_lr_range)  # beta from paper
         self.k_shot = k_shot
+        self.inner_lr_reduction_factor = inner_rl_reduction_factor
 
         self.maml = l2l.MAML(self.model, lr=self.inner_lr)
 
@@ -104,7 +107,8 @@ class MAML:
 
         for i in range(n_iters):
             meta_train_error = 0.0
-            scores = {}
+            predictions_all = []
+            targets_all = []
 
             outer_optimizer.zero_grad()
             # Sum of losses for meta-learning updates
@@ -151,33 +155,32 @@ class MAML:
                     self.loss_fn,
                     self.train_n_gradient_steps,
                     initial_lr=max(self.inner_lr_range),
-                    inner_rl_reduction_factor=2,
+                    inner_rl_reduction_factor=self.inner_lr_reduction_factor,
                 )
-                evaluation_error = evaluation_error = self.loss_fn(predictions, y_query)
+                evaluation_error = self.loss_fn(predictions, y_query)
                 evaluation_error.backward()
-
                 meta_train_error += evaluation_error.item()
-                new_scores = compute_metrics(predictions, y_query)
-                for key, value in new_scores.items():
-                    if key not in scores:
-                        scores[key] = 0
-                    scores[key] += value
+
+                predictions_all.append(predictions.detach().cpu())
+                targets_all.append(y_query.detach().cpu())
 
             meta_train_error /= n_parallel_tasks
-            for key in scores:
-                scores[key] /= n_parallel_tasks
+            big_preds = torch_cat(predictions_all, dim=0)
+            big_targets = torch_cat(targets_all, dim=0)
+            final_scores = compute_metrics(big_preds, big_targets)
             wandb.log(
                 {
                     "train/loss": meta_train_error,
-                    "train/accuracy": scores["accuracy"],
-                    "train/f1": scores["f1"],
-                    "train/precision": scores["precision"],
-                    "train/recall": scores["recall"],
-                    "train/roc_auc": scores["roc_auc"],
+                    "train/accuracy": final_scores["accuracy"],
+                    "train/f1": final_scores["f1"],
+                    "train/precision": final_scores["precision"],
+                    "train/recall": final_scores["recall"],
+                    "train/roc_auc": final_scores["roc_auc"],
                     "epoch": epoch_count,
                     "iteration": i,
                 },
             )
+
             # logger.info(f"Evaluation after epoch {epoch_count}: Loss = {meta_train_error:.2f}")
             # logger.info(f"Accuracy = {scores['accuracy']:.2f}, F1 = {scores['f1']:.2f}, Precision = {scores['precision']:.2f}, Recall = {scores['recall']:.2f}, ROC-AUC = {scores['roc_auc']:.2f}")
 
@@ -202,13 +205,9 @@ class MAML:
             # print(self.model.state_dict())
 
     def evaluate(self, dataloader: DataLoader, epoch: int):
-        # total_loss = 0.0
-        # total_correct = 0
-        # total_samples = 0
-
         meta_test_error = 0.0
-        scores = {}
-
+        predictions_all = []
+        targets_all = []
         for X, y in dataloader:
             # get support/query data
             X, y = X.to(self.device), y.to(self.device)
@@ -241,16 +240,13 @@ class MAML:
                 self.loss_fn,
                 self.train_n_gradient_steps,
                 initial_lr=max(self.inner_lr_range),
-                inner_rl_reduction_factor=2,
+                inner_rl_reduction_factor=self.inner_lr_reduction_factor,
             )
-            evaluation_error = evaluation_error = self.loss_fn(predictions, y_query)
-            new_scores = compute_metrics(predictions, y_query)
-            for key, value in new_scores.items():
-                if key not in scores:
-                    scores[key] = 0
-                scores[key] += value
-
+            evaluation_error = self.loss_fn(predictions, y_query)
             meta_test_error += evaluation_error.item()
+
+            predictions_all.append(predictions.detach().cpu())
+            targets_all.append(y_query.detach().cpu())
 
         # # Compute final metrics
         # avg_loss = total_loss / len(
@@ -258,23 +254,24 @@ class MAML:
         # )  # TODO check whether len is 1 indeed for our case
         # avg_accuracy = total_correct / total_samples
         meta_test_error /= len(dataloader)
-        for key in scores:
-            scores[key] /= len(dataloader)
+        big_preds = torch_cat(predictions_all, dim=0)
+        big_targets = torch_cat(targets_all, dim=0)
+        final_scores = compute_metrics(big_preds, big_targets)
         wandb.log(
             {
-                "val/loss": meta_test_error,
-                "val/accuracy": scores["accuracy"],
-                "val/f1": scores["f1"],
-                "val/precision": scores["precision"],
-                "val/recall": scores["recall"],
-                "val/roc_auc": scores["roc_auc"],
+                "train/loss": meta_test_error,
+                "train/accuracy": final_scores["accuracy"],
+                "train/f1": final_scores["f1"],
+                "train/precision": final_scores["precision"],
+                "train/recall": final_scores["recall"],
+                "train/roc_auc": final_scores["roc_auc"],
                 "epoch": epoch,
             },
         )
 
         logger.info(f"Evaluation after epoch {epoch}: Loss = {meta_test_error:.2f}")
         logger.info(
-            f"Accuracy = {scores['accuracy']:.2f}, F1 = {scores['f1']:.2f}, Precision = {scores['precision']:.2f}, Recall = {scores['recall']:.2f}, ROC-AUC = {scores['roc_auc']:.2f}"
+            f"Accuracy = {final_scores['accuracy']:.2f}, F1 = {final_scores['f1']:.2f}, Precision = {final_scores['precision']:.2f}, Recall = {final_scores['recall']:.2f}, ROC-AUC = {final_scores['roc_auc']:.2f}"
         )
 
 
