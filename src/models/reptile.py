@@ -234,12 +234,14 @@ from copy import deepcopy
 from loguru import logger
 from torch import nn, no_grad, zeros_like
 from torch import device as torch_device
+from torch import cat as torch_cat
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import SGD, Adam, Optimizer
 from torch.utils.data import DataLoader
 
 import wandb
 from src.helper_function import metalearning_binary_target_changer
+from src.scoring.metalearning_scoring_fn import compute_metrics
 
 
 class Reptile:  # Assumes binary classifier for now
@@ -250,9 +252,9 @@ class Reptile:  # Assumes binary classifier for now
         train_n_gradient_steps: int,
         eval_n_gradient_steps: int,
         device: torch_device,
-        meta_optimizer: Optimizer,
         inner_lr: float,
         outer_lr: float,
+        inner_rl_reduction_factor: float,
         betas: tuple[float, float] = None,
         k_shot: int = None,
         loss_fn: nn.Module = None,
@@ -267,14 +269,14 @@ class Reptile:  # Assumes binary classifier for now
         # self.loss_fn = loss_function  # TODO hypere_params?
         self.loss_fn = loss_fn or BCEWithLogitsLoss()
         self.device = device
-        self.outer_optimizer = meta_optimizer
         self.inner_lr = inner_lr
+        self.inner_rl_reduction_factor = inner_rl_reduction_factor
         self.outer_lr = outer_lr
         self.betas = betas or (0.0, 0.999)
         self.k_shot = k_shot
 
-    def _set_learning_rate(self, lr):
-        for param_group in self.outer_optimizer.param_groups:
+    def _set_learning_rate(self, optimizer, lr):
+        for param_group in optimizer.param_groups:
             param_group["lr"] = lr
 
     def evaluate(self, dataloader: DataLoader, epoch: int, lr: float):
@@ -282,12 +284,12 @@ class Reptile:  # Assumes binary classifier for now
 
         This differs from training, as it does the inner loop on a support set but evaluates on a query set,
         that is usually the rest of the data for the classes in the task.
-
-
         """
         global_model = self.model
 
-        accuracies = []
+        meta_test_error = 0.0
+        predictions_all = []
+        targets_all = []
         for X, y in dataloader:
             # get support/query data
             X, y = X.to(self.device), y.to(self.device)
@@ -304,22 +306,44 @@ class Reptile:  # Assumes binary classifier for now
                 lr=lr,  # betas=self.betas
             )
 
+            lr = self.inner_lr
             for k in range(self.eval_n_gradient_steps):
                 loss = self.loss_fn(copied_model(X_support).squeeze(), y_support)
                 loss.backward()
                 inner_optimizer.step()
                 inner_optimizer.zero_grad()
+                lr /= self.inner_rl_reduction_factor
+                self._set_learning_rate(inner_optimizer, lr)
+                
 
             copied_model.eval()
             with no_grad():
-                outputs = copied_model(X_query)
-                predictions = (outputs > 0).float()
-                n_correct = (predictions.squeeze() == y_query).sum().item()
-                task_accuracy = n_correct / y_query.size(0)
-                accuracies.append(task_accuracy)
+                predictions = copied_model(X_query)
+                evaluation_error = self.loss_fn(predictions, y_query)
+                meta_test_error += evaluation_error.item()
+                predictions_all.append(predictions)
+                targets_all.append(y_query)
 
-        mean_accuracy = sum(accuracies) / len(accuracies)
-        logger.info(f"Evaluation after epoch {epoch}: Accuracy = {mean_accuracy:.2f}")
+        meta_test_error /= len(dataloader)
+        big_preds = torch_cat(predictions_all, dim=0)
+        big_targets = torch_cat(targets_all, dim=0)
+        final_scores = compute_metrics(big_preds, big_targets)
+        wandb.log(
+            {
+                "val/loss": meta_test_error,
+                "val/accuracy": final_scores["accuracy"],
+                "val/f1": final_scores["f1"],
+                "val/precision": final_scores["precision"],
+                "val/recall": final_scores["recall"],
+                "val/roc_auc": final_scores["roc_auc"],
+                "epoch": epoch,
+            },
+        )
+
+        logger.info(f"Evaluation after epoch {epoch}: Loss = {meta_test_error:.2f}")
+        logger.info(
+            f"Accuracy = {final_scores['accuracy']:.2f}, F1 = {final_scores['f1']:.2f}, Precision = {final_scores['precision']:.2f}, Recall = {final_scores['recall']:.2f}, ROC-AUC = {final_scores['roc_auc']:.2f}"
+        )
 
     def fit(
         self,
@@ -346,13 +370,18 @@ class Reptile:  # Assumes binary classifier for now
             f"Starting training with {n_iters} iterations and {n_parallel_tasks} parallel tasks."
         )
         epoch_count = 0
-        new_outer_lr = self.outer_lr * (1.0 - (epoch_count / float(n_epochs)) ** 0.5)
-        self._set_learning_rate(new_outer_lr)
+        # new_outer_lr = self.outer_lr * (1.0 - (epoch_count / float(n_epochs)) ** 0.5)
+        # self._set_learning_rate(new_outer_lr)
         if evaluate_train:
             self.evaluate(val_dataloader, epoch_count, self.inner_lr)
         task_iterator = iter(train_dataloader)
 
+        outer_optimizer = SGD(self.model.parameters(), self.outer_lr)
+
         for i in range(n_iters):
+            meta_train_error = 0.0
+            outputs_all = []
+            targets_all = []
             # Initialize an accumulator for meta gradients (same shape as parameters)
             meta_gradients = {
                 name: zeros_like(param.data)
@@ -397,12 +426,24 @@ class Reptile:  # Assumes binary classifier for now
                     copied_model.parameters(),
                     lr=self.inner_lr,  # betas=self.betas
                 )  # TODO hyper-params
+                lr = self.inner_lr
                 for k in range(self.train_n_gradient_steps):
-                    inner_optimizer.zero_grad()
                     outputs = copied_model(X)
                     loss = self.loss_fn(outputs.squeeze(), y)
                     loss.backward()
                     inner_optimizer.step()
+                    inner_optimizer.zero_grad()
+                    lr /= self.inner_rl_reduction_factor
+                    self._set_learning_rate(inner_optimizer, lr)
+                    
+                
+                # Get metrics after last step
+                with no_grad():
+                    outputs = copied_model(X)
+                    evaluation_error = self.loss_fn(outputs, y)
+                    meta_train_error += evaluation_error.item()
+                    outputs_all.append(outputs)
+                    targets_all.append(y)
 
                 # Compute the pseudo-gradient: difference between the global model and the adapted model.
                 # According to the paper, one may define the meta-gradient as (global - adapted)/outer_lr.
@@ -419,8 +460,25 @@ class Reptile:  # Assumes binary classifier for now
                 f"Meta-update iteration {i+1}/{n_iters} complete: processed {n_parallel_tasks} parallel tasks."
             )
 
+            # Calculate and log metric after for the current original model
+            meta_train_error /= n_parallel_tasks
+            big_preds = torch_cat(outputs_all, dim=0)
+            big_targets = torch_cat(targets_all, dim=0)
+            final_scores = compute_metrics(big_preds, big_targets)
+            wandb.log(
+                {
+                    "train/loss": meta_train_error,
+                    "train/accuracy": final_scores["accuracy"],
+                    "train/f1": final_scores["f1"],
+                    "train/precision": final_scores["precision"],
+                    "train/recall": final_scores["recall"],
+                    "train/roc_auc": final_scores["roc_auc"],
+                    "epoch": epoch_count,
+                    "iteration": i,
+                },
+            )
+
             # Average the accumulated meta gradients and scale by inner_lr.
-            self.outer_optimizer.zero_grad()
             for name, param in global_model.named_parameters():
                 meta_grad = meta_gradients[name] / n_parallel_tasks
                 meta_grad = meta_grad / self.inner_lr
@@ -429,4 +487,5 @@ class Reptile:  # Assumes binary classifier for now
                 )  # Assign the pseudo-gradient for the meta optimizer
                 # print(f"params: {param.grad}")
             # Perform the meta-update using the outer optimizer.
-            self.outer_optimizer.step()
+            outer_optimizer.step()
+            outer_optimizer.zero_grad()

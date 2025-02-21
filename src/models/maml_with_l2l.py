@@ -43,45 +43,45 @@ class MAML:
 
         self.maml = l2l.MAML(self.model, lr=self.inner_lr)
 
-    def inner_loop(self, X_support: Tensor, y_support: Tensor, train: bool = True):
-        inner_optimizer = SGD(self.model.parameters(), lr=self.inner_lr)
+    # def inner_loop(self, X_support: Tensor, y_support: Tensor, train: bool = True):
+    #     inner_optimizer = SGD(self.model.parameters(), lr=self.inner_lr)
 
-        # Create a functional (fast) model that supports differentiable updates.
-        # with higher.innerloop_ctx(
-        #     self.model,
-        #     inner_optimizer,
-        #     copy_initial_weights=True,
-        #     track_higher_grads=train,
-        # ) as (fmodel, diffopt):
-        #     steps = self.train_n_gradient_steps if train else self.eval_n_gradient_steps
-        #     for _ in range(steps):
-        #         # Forward pass on support data
-        #         support_preds = fmodel(X_support).squeeze()
-        #         support_loss = self.loss_fn(support_preds, y_support)
-        #         # Perform an inner-loop update (this update is differentiable)
-        #         diffopt.step(support_loss)
-        #     return fmodel
+    #     # Create a functional (fast) model that supports differentiable updates.
+    #     # with higher.innerloop_ctx(
+    #     #     self.model,
+    #     #     inner_optimizer,
+    #     #     copy_initial_weights=True,
+    #     #     track_higher_grads=train,
+    #     # ) as (fmodel, diffopt):
+    #     #     steps = self.train_n_gradient_steps if train else self.eval_n_gradient_steps
+    #     #     for _ in range(steps):
+    #     #         # Forward pass on support data
+    #     #         support_preds = fmodel(X_support).squeeze()
+    #     #         support_loss = self.loss_fn(support_preds, y_support)
+    #     #         # Perform an inner-loop update (this update is differentiable)
+    #     #         diffopt.step(support_loss)
+    #     #     return fmodel
 
-        # Deepcopy the model
-        task_model = type(self.model)(X_support.shape[1]).to(self.device)
-        task_model.load_state_dict(self.model.state_dict())
-        task_model.train()
-        for i in range(
-            self.train_n_gradient_steps if train else self.eval_n_gradient_steps
-        ):
-            # Support loss
-            support_loss = self.loss_fn(task_model(X_support).squeeze(), y_support)
+    #     # Deepcopy the model
+    #     task_model = type(self.model)(X_support.shape[1]).to(self.device)
+    #     task_model.load_state_dict(self.model.state_dict())
+    #     task_model.train()
+    #     for i in range(
+    #         self.train_n_gradient_steps if train else self.eval_n_gradient_steps
+    #     ):
+    #         # Support loss
+    #         support_loss = self.loss_fn(task_model(X_support).squeeze(), y_support)
 
-            # Get gradients w.r.t. task_model
-            grads = grad(support_loss, task_model.parameters(), create_graph=train)
-            # print("inner lr:", self.inner_lr)
-            # print("grads", grads, sep="\n")
+    #         # Get gradients w.r.t. task_model
+    #         grads = grad(support_loss, task_model.parameters(), create_graph=train)
+    #         # print("inner lr:", self.inner_lr)
+    #         # print("grads", grads, sep="\n")
 
-            # with no_grad():   # TODO does this make a difference?
-            for param, g in zip(task_model.parameters(), grads):
-                param -= self.inner_lr * g
+    #         # with no_grad():   # TODO does this make a difference?
+    #         for param, g in zip(task_model.parameters(), grads):
+    #             param -= self.inner_lr * g
 
-        return task_model
+    #     return task_model
 
     def fit(
         self,
@@ -145,7 +145,18 @@ class MAML:
                 X_query = X[self.k_shot * 2 :, :].to(self.device)
                 y_query = y[self.k_shot * 2 :].to(self.device)
 
-                ...# TODO
+                learner = self.maml.clone()
+                predictions = l2l.fast_adapt(
+                    X_support,
+                    y_support,
+                    X_query,
+                    y_query,
+                    learner,
+                    self.loss_fn,
+                    self.train_n_gradient_steps,
+                    initial_lr=max(self.inner_lr_range),
+                    inner_rl_reduction_factor=self.inner_lr_reduction_factor,
+                )
                 evaluation_error = self.loss_fn(predictions, y_query)
                 evaluation_error.backward()
                 meta_train_error += evaluation_error.item()
@@ -153,6 +164,7 @@ class MAML:
                 predictions_all.append(predictions.detach().cpu())
                 targets_all.append(y_query.detach().cpu())
 
+            # Calculate and log metric after for the current original model
             meta_train_error /= n_parallel_tasks
             big_preds = torch_cat(predictions_all, dim=0)
             big_targets = torch_cat(targets_all, dim=0)
@@ -219,7 +231,18 @@ class MAML:
             #         total_correct += (y_preds == y_query).sum().item()
             #         total_samples += y_query.shape[0]
 
-            ...# TODO
+            learner = self.maml.clone()
+            predictions = l2l.fast_adapt(
+                X_support,
+                y_support,
+                X_query,
+                y_query,
+                learner,
+                self.loss_fn,
+                self.train_n_gradient_steps,
+                initial_lr=max(self.inner_lr_range),
+                inner_rl_reduction_factor=self.inner_lr_reduction_factor,
+            )
             evaluation_error = self.loss_fn(predictions, y_query)
             meta_test_error += evaluation_error.item()
 

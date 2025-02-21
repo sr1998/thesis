@@ -164,6 +164,8 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
             for label_ids in label_ids_per_class.values():
                 # We sample the label_ids of the class circularly as we have number of batches based on the
                 # largest class for each group (so the smaller class is oversampled)
+                # Circular slicing like this can be a problem if the number of samples is less than 2*k_shot,
+                # as query and support set will overlap. So, be mindful in case you need both.
                 batch.extend(circular_slice(label_ids, start_idx, start_idx + self.k_shot))
             start_indices_per_group[group] += self.k_shot
             start_idx = start_indices_per_group[group]
@@ -172,6 +174,8 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
                     if self.training:
                         # We sample the label_ids of the class circularly as we have number of batches based on the
                         # largest class for each group (so the smaller class is oversampled)
+                        # Circular slicing like this can be a problem if the number of samples is less than 2*k_shot,
+                        # as query and support set will overlap. So, be mindful in case you need both.
                         batch.extend(circular_slice(label_ids, start_idx, start_idx + self.k_shot))
                         start_indices_per_group[group] += self.k_shot
                     else:

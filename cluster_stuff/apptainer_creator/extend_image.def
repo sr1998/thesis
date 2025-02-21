@@ -1,9 +1,0 @@
-Bootstrap: localimage
-From: apptainer-for-thesis.sif
-
-%post
-    apt-get update && apt-get install -y python3-pip
-    pip install --upgrade pip
-    pip install optuna
-    pip show optuna
-    pip3 install torch torchvision torchaudio

@@ -15,7 +15,7 @@ from torch.optim import SGD, Adam
 from torch.utils.data import DataLoader
 
 import src.data.sun_et_al as hf
-import src.models.maml as maml
+import src.models.maml_with_l2l as maml_with_l2l
 import src.models.reptile as rp
 import wandb
 from src.global_vars import BASE_DATA_DIR
@@ -127,6 +127,8 @@ def main(
     scale_factor_before_training: int = 100,
     loss_fn: str = "BCELog",
     use_wandb: bool = True,
+    features_to_use: list[str] = None,
+    algorithm: str = "MAML",
 ):
     if loss_fn == "BCELog":
         loss_fn = nn.BCEWithLogitsLoss()
@@ -189,7 +191,7 @@ def main(
         "e_k" + str(eval_k_shot),
     ]
 
-    wand_name = f"{model_name}_TS{test_study}_VS{val_study}_J{job_id}_TAX{tax_level}_TK{train_k_shot}_EK{eval_k_shot if eval_k_shot else train_k_shot}"
+    wand_name = f"w{model_name}_ts{test_study}_vs{val_study}_j{job_id}_tax{tax_level}_tk{train_k_shot}_ek{eval_k_shot}"
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -209,6 +211,11 @@ def main(
             group="MAML",
             tags=wandb_base_tags,
         )
+
+    logger.success("wandb init done")
+
+    if features_to_use:
+        sun_et_al_abundance = sun_et_al_abundance.loc[:, features_to_use]
 
     sun_et_al_metadata = sun_et_al_metadata.sort_index()
     sun_et_al_abundance = sun_et_al_abundance.sort_index()
@@ -284,7 +291,7 @@ def main(
 
     sampler = hf.BinaryFewShotBatchSampler(
         test,
-        eval_k_shot,
+        train_k_shot,   # Has to be train_k_shot for now. Adjust MAML and Reptile algorithms (evaluation part) to be able to use eval_k_shot
         include_query=True,
         shuffle=False,
         shuffle_once=False,
@@ -294,7 +301,7 @@ def main(
 
     sampler = hf.BinaryFewShotBatchSampler(
         val,
-        eval_k_shot,
+        train_k_shot,
         include_query=True,
         shuffle=False,
         shuffle_once=False,
@@ -312,47 +319,46 @@ def main(
     # Simple model to test
     model = model_module.get_model(model_name)(n_features).to(device)
 
-    # Instantiate the Reptile meta-learner.
-    # reptile = rp.Reptile(
-    #     model=model,
-    #     train_n_gradient_steps=n_gradient_steps,
-    #     eval_n_gradient_steps=n_gradient_steps,
-    #     device=device,
-    #     # loss_function=loss_fn,
-    #     meta_optimizer=meta_optimizer,
-    #     inner_lr=inner_lr,
-    #     outer_lr=outer_lr,
-    #     k_shot=k_shot,
-    # )
+    if algorithm == "MAML":
+        MAML = maml_with_l2l.MAML(
+            model=model,
+            train_n_gradient_steps=n_gradient_steps,
+            eval_n_gradient_steps=n_gradient_steps,
+            device=device,
+            inner_lr_range=inner_lr_range,
+            inner_rl_reduction_factor=inner_rl_reduction_factor,
+            outer_lr_range=outer_lr_range,
+            k_shot=train_k_shot,
+            loss_fn=loss_fn,
+        )
 
-    # reptile.fit(
-    #     train_dataloader=train_loader,
-    #     n_epochs=n_epochs,
-    #     n_parallel_tasks=n_parallel_tasks,
-    #     evaluate_train=True,
-    #     val_dataloader=val_loader,
-    # )
+        MAML.fit(
+            train_dataloader=train_loader,
+            n_epochs=n_epochs,
+            n_parallel_tasks=n_parallel_tasks,
+            evaluate_train=True,
+            val_dataloader=val_loader,
+        )
+    elif algorithm == "Reptile":
+            # Instantiate the Reptile meta-learner.
+        reptile = rp.Reptile(
+            model=model,
+            train_n_gradient_steps=n_gradient_steps,
+            eval_n_gradient_steps=n_gradient_steps,
+            device=device,
+            # loss_function=loss_fn,
+            inner_lr=max(inner_lr_range),
+            outer_lr=max(outer_lr_range),
+            k_shot=train_k_shot,
+        )
 
-    # Do MAML
-    MAML = maml.MAML(
-        model=model,
-        train_n_gradient_steps=n_gradient_steps,
-        eval_n_gradient_steps=n_gradient_steps,
-        device=device,
-        inner_lr_range=inner_lr_range,
-        inner_rl_reduction_factor=inner_rl_reduction_factor,
-        outer_lr_range=outer_lr_range,
-        k_shot=train_k_shot,
-        loss_fn=loss_fn,
-    )
-
-    MAML.fit(
-        train_dataloader=train_loader,
-        n_epochs=n_epochs,
-        n_parallel_tasks=n_parallel_tasks,
-        evaluate_train=True,
-        val_dataloader=val_loader,
-    )
+        reptile.fit(
+            train_dataloader=train_loader,
+            n_epochs=n_epochs,
+            n_parallel_tasks=n_parallel_tasks,
+            evaluate_train=True,
+            val_dataloader=val_loader,
+        )
 
 
 if __name__ == "__main__":
@@ -377,4 +383,5 @@ if __name__ == "__main__":
     #     do_normalization_before_scaling=True,
     #     scale_factor_before_training=100,
     #     loss_fn="BCELog",
+    #     algorithm="MAML"
     # )

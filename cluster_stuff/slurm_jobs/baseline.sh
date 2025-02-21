@@ -62,7 +62,7 @@ srun apptainer exec \
     -B $HOME:$HOME \
     --env-file $HOME/.env \
     $APPTAINER_ROOT/$APPTAINER_NAME \
-    python -m src.main \
+    python -m src.main_baseline \
     --what "sun et al" \
     --config_script "run_configs.rf_baseline_for_sun_et_al" \
     --tax_level "genus" \
