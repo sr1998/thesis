@@ -4,6 +4,7 @@ from importlib import import_module
 
 sys.path.append(".")
 
+import fire
 import pandas as pd
 import torch
 from loguru import logger
@@ -188,7 +189,7 @@ def main(
         "e_k" + str(eval_k_shot),
     ]
 
-    wand_name = f"W{model_name}_TS{test_study}_VS{val_study}_J{job_id}_TAX{tax_level}_TK{train_k_shot}_EK{eval_k_shot if eval_k_shot else train_k_shot}"
+    wand_name = f"{model_name}_TS{test_study}_VS{val_study}_J{job_id}_TAX{tax_level}_TK{train_k_shot}_EK{eval_k_shot if eval_k_shot else train_k_shot}"
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -355,23 +356,25 @@ def main(
 
 
 if __name__ == "__main__":
-    main(
-        "src.models.models",
-        "model3",
-        "mpa4_species_profile_preprocessed.csv",
-        "sample_group_species_preprocessed.csv",
-        "",
-        "JieZ_2017",
-        outer_lr_range=(1, 0.01),
-        inner_lr_range=(0.5, 0.001),
-        inner_rl_reduction_factor=2,
-        n_epochs=100,
-        train_k_shot=10,
-        n_gradient_steps=5,
-        n_parallel_tasks=5,
-        n_components_reduction_factor=0,
-        use_cached_pca=False,
-        do_normalization_before_scaling=True,
-        scale_factor_before_training=100,
-        loss_fn="BCELog",
-    )
+    fire.Fire(main)
+
+    # main(
+    #     "src.models.models",
+    #     "model3",
+    #     "mpa4_species_profile_preprocessed.csv",
+    #     "sample_group_species_preprocessed.csv",
+    #     "",
+    #     "JieZ_2017",
+    #     outer_lr_range=(1, 0.01),
+    #     inner_lr_range=(0.5, 0.001),
+    #     inner_rl_reduction_factor=2,
+    #     n_epochs=100,
+    #     train_k_shot=10,
+    #     n_gradient_steps=5,
+    #     n_parallel_tasks=5,
+    #     n_components_reduction_factor=0,
+    #     use_cached_pca=False,
+    #     do_normalization_before_scaling=True,
+    #     scale_factor_before_training=100,
+    #     loss_fn="BCELog",
+    # )
