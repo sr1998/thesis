@@ -318,7 +318,7 @@ class Reptile:  # Assumes binary classifier for now
 
             copied_model.eval()
             with no_grad():
-                predictions = copied_model(X_query)
+                predictions = copied_model(X_query).squeeze()
                 evaluation_error = self.loss_fn(predictions, y_query)
                 meta_test_error += evaluation_error.item()
                 predictions_all.append(predictions)
@@ -428,8 +428,8 @@ class Reptile:  # Assumes binary classifier for now
                 )  # TODO hyper-params
                 lr = self.inner_lr
                 for k in range(self.train_n_gradient_steps):
-                    outputs = copied_model(X)
-                    loss = self.loss_fn(outputs.squeeze(), y)
+                    outputs = copied_model(X).squeeze()
+                    loss = self.loss_fn(outputs, y)
                     loss.backward()
                     inner_optimizer.step()
                     inner_optimizer.zero_grad()
@@ -439,7 +439,7 @@ class Reptile:  # Assumes binary classifier for now
                 
                 # Get metrics after last step
                 with no_grad():
-                    outputs = copied_model(X)
+                    outputs = copied_model(X).squeeze()
                     evaluation_error = self.loss_fn(outputs, y)
                     meta_train_error += evaluation_error.item()
                     outputs_all.append(outputs)
