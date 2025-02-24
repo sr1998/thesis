@@ -1,4 +1,6 @@
-#!/usr/bin/env python3
+# This code has been adapted from the learn2learn library.
+# The original code can be found at: https://github.com/learnables/learn2learn/blob/master/examples/vision/maml_miniimagenet.py
+# and https://github.com/learnables/learn2learn/blob/master/learn2learn/algorithms/maml.py
 
 import traceback
 
@@ -10,8 +12,6 @@ from torch.autograd import grad
 def fast_adapt(
     X_support,
     y_support,
-    X_query,
-    y_query,
     learner,
     loss,
     adaptation_steps,
@@ -25,9 +25,7 @@ def fast_adapt(
         learner.adapt(adaptation_error)
         learner.lr = learner.lr / inner_rl_reduction_factor
 
-    # Predict on the query set
-    predictions = learner(X_query).squeeze()
-    return predictions
+    return learner
 
 
 class BaseLearner(nn.Module):

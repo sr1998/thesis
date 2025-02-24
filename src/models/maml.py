@@ -7,7 +7,7 @@ from torch.nn import BCEWithLogitsLoss
 from torch.optim import SGD, Adam, Optimizer
 from torch.utils.data import DataLoader
 
-import src.models.maml_learn2learn as l2l
+import src.models.maml_helpers_l2l as maml_helpers_l2l
 import wandb
 from src.helper_function import metalearning_binary_target_changer, set_learning_rate
 from src.scoring.metalearning_scoring_fn import compute_metrics
@@ -41,7 +41,7 @@ class MAML:
         self.k_shot = k_shot
         self.inner_lr_reduction_factor = inner_rl_reduction_factor
 
-        self.maml = l2l.MAML(self.model, lr=self.inner_lr)
+        self.maml = maml_helpers_l2l.MAML(self.model, lr=self.inner_lr)
 
     def inner_loop(self, X_support: Tensor, y_support: Tensor, train: bool = True):
         inner_optimizer = SGD(self.model.parameters(), lr=self.inner_lr)
@@ -145,7 +145,7 @@ class MAML:
                 X_query = X[self.k_shot * 2 :, :].to(self.device)
                 y_query = y[self.k_shot * 2 :].to(self.device)
 
-                ...# TODO
+                ...  # TODO
                 evaluation_error = self.loss_fn(predictions, y_query)
                 evaluation_error.backward()
                 meta_train_error += evaluation_error.item()
@@ -219,7 +219,7 @@ class MAML:
             #         total_correct += (y_preds == y_query).sum().item()
             #         total_samples += y_query.shape[0]
 
-            ...# TODO
+            ...  # TODO
             evaluation_error = self.loss_fn(predictions, y_query)
             meta_test_error += evaluation_error.item()
 

@@ -11,12 +11,11 @@ from loguru import logger
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import Normalizer
 from torch import nn
-from torch.optim import SGD, Adam
 from torch.utils.data import DataLoader
 
 import src.data.sun_et_al as hf
 import src.models.maml_with_l2l as maml_with_l2l
-import src.models.reptile as rp
+import src.models.reptile_with_l2l as rp
 import wandb
 from src.global_vars import BASE_DATA_DIR
 
@@ -126,6 +125,7 @@ def main(
     do_normalization_before_scaling: bool = True,
     scale_factor_before_training: int = 100,
     loss_fn: str = "BCELog",
+    betas: tuple[float, float] = (0.0, 0.999),
     use_wandb: bool = True,
     features_to_use: list[str] = None,
     algorithm: str = "MAML",
@@ -349,11 +349,12 @@ def main(
             train_n_gradient_steps=n_gradient_steps,
             eval_n_gradient_steps=n_gradient_steps,
             device=device,
-            # loss_function=loss_fn,
-            inner_lr=max(inner_lr_range),
+            inner_lr_range=inner_lr_range,
             inner_rl_reduction_factor=inner_rl_reduction_factor,
-            outer_lr=max(outer_lr_range),
+            outer_lr_range=outer_lr_range,
+            betas=betas,
             k_shot=train_k_shot,
+            loss_fn=loss_fn
         )
 
         reptile.fit(

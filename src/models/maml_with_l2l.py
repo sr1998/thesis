@@ -7,7 +7,7 @@ from torch.nn import BCEWithLogitsLoss
 from torch.optim import SGD, Adam, Optimizer
 from torch.utils.data import DataLoader
 
-import src.models.maml_learn2learn as l2l
+import src.models.maml_helpers_l2l as maml_helpers_l2l
 import wandb
 from src.helper_function import metalearning_binary_target_changer, set_learning_rate
 from src.scoring.metalearning_scoring_fn import compute_metrics
@@ -41,7 +41,7 @@ class MAML:
         self.k_shot = k_shot
         self.inner_lr_reduction_factor = inner_rl_reduction_factor
 
-        self.maml = l2l.MAML(self.model, lr=self.inner_lr)
+        self.maml = maml_helpers_l2l.MAML(self.model, lr=self.inner_lr)
 
     # def inner_loop(self, X_support: Tensor, y_support: Tensor, train: bool = True):
     #     inner_optimizer = SGD(self.model.parameters(), lr=self.inner_lr)
@@ -146,7 +146,7 @@ class MAML:
                 y_query = y[self.k_shot * 2 :].to(self.device)
 
                 learner = self.maml.clone()
-                predictions = l2l.fast_adapt(
+                learner = maml_helpers_l2l.fast_adapt(
                     X_support,
                     y_support,
                     X_query,
@@ -157,6 +157,7 @@ class MAML:
                     initial_lr=max(self.inner_lr_range),
                     inner_rl_reduction_factor=self.inner_lr_reduction_factor,
                 )
+                predictions = learner(X_query).squeeze()
                 evaluation_error = self.loss_fn(predictions, y_query)
                 evaluation_error.backward()
                 meta_train_error += evaluation_error.item()
@@ -232,7 +233,7 @@ class MAML:
             #         total_samples += y_query.shape[0]
 
             learner = self.maml.clone()
-            predictions = l2l.fast_adapt(
+            learner = maml_helpers_l2l.fast_adapt(
                 X_support,
                 y_support,
                 X_query,
@@ -243,6 +244,7 @@ class MAML:
                 initial_lr=max(self.inner_lr_range),
                 inner_rl_reduction_factor=self.inner_lr_reduction_factor,
             )
+            predictions = learner(X_query).squeeze()
             evaluation_error = self.loss_fn(predictions, y_query)
             meta_test_error += evaluation_error.item()
 
@@ -250,10 +252,6 @@ class MAML:
             targets_all.append(y_query.detach().cpu())
 
         # # Compute final metrics
-        # avg_loss = total_loss / len(
-        #     dataloader
-        # )  # TODO check whether len is 1 indeed for our case
-        # avg_accuracy = total_correct / total_samples
         meta_test_error /= len(dataloader)
         big_preds = torch_cat(predictions_all, dim=0)
         big_targets = torch_cat(targets_all, dim=0)
