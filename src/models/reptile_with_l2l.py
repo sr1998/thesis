@@ -212,7 +212,7 @@ class Reptile:  # Assumes binary classifier for now
 
                 self.inner_optimizer_state = inner_optimizer.state_dict()
                 for p, l in zip(self.model.parameters(), learner.parameters()):
-                    p.grad.data.add(-1.0, l.data)
+                    p.grad.data.add(l.data, alpha=-1.0)
 
                 meta_train_error += train_error.item()
                 outputs_all.append(outputs.detach().cpu())
