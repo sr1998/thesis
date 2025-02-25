@@ -4,7 +4,7 @@ from os.path import join as os_path_join
 import fire
 
 from src.global_vars import BASE_DIR
-from src.mgnify_helper import MGnifyData
+from src.data.mgnify_helper import MGnifyData
 
 
 def get_mgnify_data(study_download_label_start: str,

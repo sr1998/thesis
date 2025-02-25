@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 from loguru import logger
 
-import src.mgnify_helper as mhf
+import src.data.mgnify_helper as mhf
 from src.helper_function import df_str_for_loguru
 
 

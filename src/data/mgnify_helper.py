@@ -12,7 +12,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
 
-from src.biosamples_helper_functions import get_metadata_of_samples
+from src.data.biosamples_helper_functions import get_metadata_of_samples
 from src.global_vars import HTTP_ADAPTER_FOR_REQUESTS, TIMEOUT, PAGE_SIZE
 from src.helper_function import config_session, hasher
 
