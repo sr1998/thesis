@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 
 import src.data.sun_et_al as hf
 import src.models.maml_with_l2l as maml_with_l2l
-import src.models.reptile_with_l2l as rp
+import src.models.reptile_with_l2l as rp_with_l2l
 import wandb
 from src.global_vars import BASE_DATA_DIR
 
@@ -167,6 +167,7 @@ def main(
         "val_study": val_study,
         "outer_lr_range": outer_lr_range,
         "inner_lr_range": inner_lr_range,
+        "inner_rl_reduction_factor": inner_rl_reduction_factor,
         "n_gradient_steps": n_gradient_steps,
         "n_parallel_tasks": n_parallel_tasks,
         "n_epochs": n_epochs,
@@ -342,9 +343,9 @@ def main(
             evaluate_train=True,
             val_dataloader=val_loader,
         )
-    elif algorithm == "Reptile":
+    elif algorithm == "Reptile":    # Not converging at all with some tested hyperparams. Wrong implementation maybe. To be figured out when time allows.
             # Instantiate the Reptile meta-learner.
-        reptile = rp.Reptile(
+        reptile = rp_with_l2l.Reptile(
             model=model,
             train_n_gradient_steps=n_gradient_steps,
             eval_n_gradient_steps=n_gradient_steps,

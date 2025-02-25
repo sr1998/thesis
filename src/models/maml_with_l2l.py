@@ -149,8 +149,6 @@ class MAML:
                 learner = maml_helpers_l2l.fast_adapt(
                     X_support,
                     y_support,
-                    X_query,
-                    y_query,
                     learner,
                     self.loss_fn,
                     self.train_n_gradient_steps,
@@ -236,20 +234,20 @@ class MAML:
             learner = maml_helpers_l2l.fast_adapt(
                 X_support,
                 y_support,
-                X_query,
-                y_query,
                 learner,
                 self.loss_fn,
                 self.train_n_gradient_steps,
                 initial_lr=max(self.inner_lr_range),
                 inner_rl_reduction_factor=self.inner_lr_reduction_factor,
             )
-            predictions = learner(X_query).squeeze()
-            evaluation_error = self.loss_fn(predictions, y_query)
-            meta_test_error += evaluation_error.item()
+            learner.eval()
+            with no_grad():
+                predictions = learner(X_query).squeeze()
+                evaluation_error = self.loss_fn(predictions, y_query)
+                meta_test_error += evaluation_error.item()
 
-            predictions_all.append(predictions.detach().cpu())
-            targets_all.append(y_query.detach().cpu())
+                predictions_all.append(predictions.detach().cpu())
+                targets_all.append(y_query.detach().cpu())
 
         # # Compute final metrics
         meta_test_error /= len(dataloader)

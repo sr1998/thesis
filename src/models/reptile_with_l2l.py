@@ -83,6 +83,7 @@ class Reptile:  # Assumes binary classifier for now
                 self.inner_lr,
                 self.inner_rl_reduction_factor,
             )
+            learner.eval()
             with no_grad():
                 outputs = learner(X_query).squeeze()
                 eval_error = self.loss_fn(outputs, y_query)
