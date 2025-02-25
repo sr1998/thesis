@@ -11,7 +11,9 @@ from loguru import logger
 from numpy.random import RandomState
 from requests import Session as requests_session
 from sklearn.base import BaseEstimator
+from sklearn.feature_selection import SelectPercentile, mutual_info_classif
 from sklearn.metrics import get_scorer
+from sklearn.model_selection import cross_validate
 from sklearn.pipeline import Pipeline
 from torch import Tensor
 
@@ -223,6 +225,85 @@ def metalearning_binary_target_changer(labels: Tensor) -> Tensor:
     labels = (labels + to_change) % 2
     return labels
 
+
 def set_learning_rate(optimizer, lr):
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
+
+
+def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
+    """Get the pipeline with the hyperparameters sampled from the search space."""
+    trial_config = search_space_sampler(optuna_trial)
+
+    if what == "mgnify":
+        n_neighbors = trial_config["preprocessor__feature_space_change__n_neighbors"]
+        preprocessor__feature_space_change = SelectPercentile(
+            lambda X, y: mutual_info_classif(
+                X, y, n_neighbors=n_neighbors, discrete_features=False
+            ),
+            percentile=trial_config["preprocessor__feature_space_change__percentile"],
+        )
+
+        standard_pipeline = standard_pipeline.set_params(
+            preprocessor__feature_space_change=preprocessor__feature_space_change
+        )
+
+    if not trial_config.get("model__bootstrap", False):
+        trial_config["model__oob_score"] = False
+
+    if trial_config.get("model__oob_score", False):
+        trial_config["model__oob_score"] = get_scorer(
+            trial_config["model__oob_score"]
+        )._score_func
+
+    standard_pipeline = standard_pipeline.set_params(
+        **{k: v for k, v in trial_config.items() if "model" in k}
+    )
+
+    return standard_pipeline
+
+
+def hyp_param_eval_with_cv(
+    what,
+    data,
+    labels,
+    cv,
+    standard_pipeline,
+    scoring,
+    best_fit_scorer,
+    outer_cv_step,
+    search_space_sampler,
+    trial_config,
+):
+    """Evaluate the hyperparameters with cross-validation for a given dataset and pipeline with the given search space sampler."""
+    pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial_config)
+
+    logger.info("pipeline:")
+    print(pipeline)
+
+    cross_val_results = cross_validate(
+        pipeline,
+        data,
+        labels,
+        cv=cv,
+        scoring=scoring,
+        return_train_score=True,
+        n_jobs=1,
+    )
+
+    cross_val_res_dict = {
+        **{
+            k.replace("train_", "mean_inner_cv_train/"): np.mean(v)
+            for k, v in cross_val_results.items()
+            if "train" in k
+        },
+        **{
+            k.replace("test_", "mean_inner_cv_val/"): np.mean(v)
+            for k, v in cross_val_results.items()
+            if "test" in k
+        },
+    }
+
+    wandb.log(cross_val_res_dict, step=outer_cv_step)
+
+    return cross_val_results["test_" + best_fit_scorer].mean()

@@ -4,6 +4,8 @@ from importlib import import_module
 
 from sklearn.inspection import permutation_importance
 
+from src.data.dataloader import get_mgnify_data, get_sun_et_al_study_data
+
 sys.path.append(".")
 import fire
 import numpy as np
@@ -11,137 +13,14 @@ import optuna
 import pandas as pd
 from loguru import logger
 from numpy.random import RandomState
-from sklearn.feature_selection import SelectPercentile, mutual_info_classif
-from sklearn.metrics import get_scorer
-from sklearn.model_selection import cross_validate
 
 import wandb
-from src.data.dataloader import load_data
-from src.global_vars import BASE_DATA_DIR
 from src.helper_function import (
+    get_pipeline,
     get_run_dir_for_experiment,
     get_scores,
+    hyp_param_eval_with_cv,
 )
-
-
-def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
-    trial_config = search_space_sampler(optuna_trial)
-
-    if what == "mgnify":
-        n_neighbors = trial_config["preprocessor__feature_space_change__n_neighbors"]
-        preprocessor__feature_space_change = SelectPercentile(
-            lambda X, y: mutual_info_classif(
-                X, y, n_neighbors=n_neighbors, discrete_features=False
-            ),
-            percentile=trial_config["preprocessor__feature_space_change__percentile"],
-        )
-
-        standard_pipeline = standard_pipeline.set_params(
-            preprocessor__feature_space_change=preprocessor__feature_space_change
-        )
-
-    if not trial_config.get("model__bootstrap", False):
-        trial_config["model__oob_score"] = False
-
-    if trial_config.get("model__oob_score", False):
-        trial_config["model__oob_score"] = get_scorer(
-            trial_config["model__oob_score"]
-        )._score_func
-
-    standard_pipeline = standard_pipeline.set_params(
-        **{k: v for k, v in trial_config.items() if "model" in k}
-    )
-
-    return standard_pipeline
-
-
-def get_mgnify_data(
-    study_accessions: str | list[str] | None,
-    summary_type: str,
-    pipeline_version: str,
-    label_col: str,
-    metdata_cols_to_use_as_features: list[str] = [],
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    if not isinstance(study_accessions, list) and study_accessions is not None:
-        study_accessions = [study_accessions]
-
-    data, labels = load_data(
-        BASE_DATA_DIR,
-        study_accessions,
-        summary_type,
-        pipeline_version,
-        metdata_cols_to_use_as_features,
-        label_col,
-    )
-
-    return data, labels
-
-
-def get_sun_et_al_data(study: str, tax_level: str):
-    data = pd.read_csv(
-        BASE_DATA_DIR / "sun_et_al_data" / f"mpa4_{tax_level}_profile_preprocessed.csv",
-        index_col=0,
-        header=0,
-    )
-    metadata = pd.read_csv(
-        BASE_DATA_DIR / "sun_et_al_data" / f"sample_group_{tax_level}_preprocessed.csv",
-        header=0,
-    )
-
-    # Filter metadata to only include the study of interest
-    metadata = metadata[metadata["Project_1"] == study]
-    metadata = metadata.set_index("Sample")
-    labels = metadata["Group"]
-
-    # Filter data to only include samples that are in the metadata
-    data = data.loc[labels.index]
-
-    return data, labels
-
-
-def hyp_param_eval_with_cv(
-    what,
-    data,
-    labels,
-    cv,
-    standard_pipeline,
-    scoring,
-    best_fit_scorer,
-    outer_cv_step,
-    search_space_sampler,
-    trial_config,
-):
-    pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial_config)
-
-    logger.info("pipeline:")
-    print(pipeline)
-
-    cross_val_results = cross_validate(
-        pipeline,
-        data,
-        labels,
-        cv=cv,
-        scoring=scoring,
-        return_train_score=True,
-        n_jobs=1,
-    )
-
-    cross_val_res_dict = {
-        **{
-            k.replace("train_", "mean_inner_cv_train/"): np.mean(v)
-            for k, v in cross_val_results.items()
-            if "train" in k
-        },
-        **{
-            k.replace("test_", "mean_inner_cv_val/"): np.mean(v)
-            for k, v in cross_val_results.items()
-            if "test" in k
-        },
-    }
-
-    wandb.log(cross_val_res_dict, step=outer_cv_step)
-
-    return cross_val_results["test_" + best_fit_scorer].mean()
 
 
 # TODO class imbalance fix
@@ -294,7 +173,7 @@ def main(
             metadata_cols_to_use_as_features,
         )
     elif what == "sun et al":
-        data, labels = get_sun_et_al_data(study, tax_level)
+        data, labels = get_sun_et_al_study_data(study, tax_level)
     else:
         raise ValueError("Invalid value for 'what'")
 
@@ -501,7 +380,7 @@ def main(
     # mean and std of importance of outer runs
     rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
     rf_importance_std = split_rf_importance_df.groupby("Feature").std()
-    
+
     rf_importance_summary_df = pd.DataFrame(
         {
             "Feature": rf_importance_mean.index,
@@ -511,7 +390,11 @@ def main(
     )
 
     wandb.log(
-        {"RF Feature Importance Summary": wandb.Table(dataframe=rf_importance_summary_df)}
+        {
+            "RF Feature Importance Summary": wandb.Table(
+                dataframe=rf_importance_summary_df
+            )
+        }
     )
     importance_summary_path = (
         get_run_dir_for_experiment(misc_config) / "feature_importance_summary.csv"

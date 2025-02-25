@@ -4,10 +4,11 @@ import pandas as pd
 from loguru import logger
 
 import src.data.mgnify_helper as mhf
+from src.global_vars import BASE_DATA_DIR
 from src.helper_function import df_str_for_loguru
 
 
-def load_data(
+def load_mgnify_data(
     base_data_dir: str | Path,
     study_accessions: list[str],  # | set[str] | None?
     summary_type: str,
@@ -149,3 +150,78 @@ def load_data(
     combined_data = combined_data.drop(columns=[label_col])
 
     return combined_data, labels
+
+
+def get_mgnify_data(
+    study_accessions: str | list[str] | None,
+    summary_type: str,
+    pipeline_version: str,
+    label_col: str,
+    metdata_cols_to_use_as_features: list[str] = [],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Get the data and labels for the MGnify dataset for learning.
+
+    Args:
+        study_accessions: List of study accessions.
+        summary_type: Type of summary data. Possible values:
+            - GO_abundances
+            - GO-slim_abundances
+            - phylum_taxonomy_abundances_SSU
+            - taxonomy_abundances_SSU
+            - IPR_abundances
+            - ... (see MGnify API for more)
+        pipeline_version: Pipeline version. Possible values:
+            - v3.0
+            - v4.0
+            - v4.1
+            - v5.0
+        label_col: Label column in metadata
+        metdata_cols_to_use_as_features: Metadata columns to use as features.
+
+    Returns:
+        The data and labels for the MGnify dataset.
+    """
+    if not isinstance(study_accessions, list) and study_accessions is not None:
+        study_accessions = [study_accessions]
+
+    data, labels = load_mgnify_data(
+        BASE_DATA_DIR,
+        study_accessions,
+        summary_type,
+        pipeline_version,
+        metdata_cols_to_use_as_features,
+        label_col,
+    )
+
+    return data, labels
+
+
+def get_sun_et_al_study_data(study: str, tax_level: str):
+    """Get the data and labels for the Sun et al. of a specific study and taxonomic level for learning.
+
+    Args:
+        study: The study to get the data for.
+        tax_level: The taxonomic level to get the data for.
+
+    Returns:
+        The data and labels for the Sun et al. dataset.
+    """
+    data = pd.read_csv(
+        BASE_DATA_DIR / "sun_et_al_data" / f"mpa4_{tax_level}_profile_preprocessed.csv",
+        index_col=0,
+        header=0,
+    )
+    metadata = pd.read_csv(
+        BASE_DATA_DIR / "sun_et_al_data" / f"sample_group_{tax_level}_preprocessed.csv",
+        header=0,
+    )
+
+    # Filter metadata to only include the study of interest
+    metadata = metadata[metadata["Project_1"] == study]
+    metadata = metadata.set_index("Sample")
+    labels = metadata["Group"]
+
+    # Filter data to only include samples that are in the metadata
+    data = data.loc[labels.index]
+
+    return data, labels

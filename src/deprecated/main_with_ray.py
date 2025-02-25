@@ -18,7 +18,7 @@ from sklearn.model_selection import cross_validate
 
 import joblib
 import wandb
-from src.data.dataloader import load_data
+from src.data.dataloader import load_mgnify_data
 from src.global_vars import BASE_DATA_DIR, BASE_DIR
 from src.helper_function import (
     get_run_dir_for_experiment,
@@ -38,7 +38,7 @@ def get_data(
     if not isinstance(study_accessions, list) and study_accessions is not None:
         study_accessions = [study_accessions]
 
-    data, labels = load_data(
+    data, labels = load_mgnify_data(
         base_data_dir,
         study_accessions,
         summary_type,
@@ -418,9 +418,11 @@ def main(
 if __name__ == "__main__":
     # fire.Fire(main)
 
-    main("run_configs.simple_rf_baseline",
-         study_accessions=['MGYS00003677'],
-         summary_type="GO_abundances",
-         pipeline_version="v4.1",
-         label_col="disease status__biosamples",
-         positive_class_label="Sick")
+    main(
+        "run_configs.simple_rf_baseline",
+        study_accessions=["MGYS00003677"],
+        summary_type="GO_abundances",
+        pipeline_version="v4.1",
+        label_col="disease status__biosamples",
+        positive_class_label="Sick",
+    )
