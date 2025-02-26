@@ -33,8 +33,8 @@ def main(
     what: str,
     config_script: str,
     *,
-    test_study: list,
-    val_study: list,
+    test_study: str | list[str],
+    # val_study: list[str]  # val_study is randomly selected for each outer and inner split combination
     abundance_file: str | Path,  # for sun et al. data for now
     metadata_file: str | Path,  # for sun et al. data for now
     eval_k_shot: int,
@@ -60,7 +60,7 @@ def main(
 
     setup["what"] = what
     setup["test_study"] = test_study
-    setup["val_study"] = val_study
+    # setup["val_study"] = val_study
     setup["abundance_file"] = abundance_file
     setup["metadata_file"] = metadata_file
     tax_level = abundance_file.split("_")[1]
@@ -71,7 +71,7 @@ def main(
 
     job_id = os.getenv("SLURM_JOB_ID")
     wandb_name = (
-        f"w_{what}__TS{test_study}_VS{val_study}_J{job_id}_T{tax_level}_EK{eval_k_shot}"
+        f"w_{what}__TS{test_study}_J{job_id}_T{tax_level}_EK{eval_k_shot}"  # _VS{val_study}
     )
 
     # get misc config parameters
@@ -89,7 +89,7 @@ def main(
 
     wandb_base_tags = [
         "t_s" + str(test_study),
-        "v_s" + str(val_study),
+        # "v_s" + str(val_study),
         "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
         "j_" + job_id if job_id else "j_local",
         "tax_" + tax_level,
@@ -100,23 +100,6 @@ def main(
         wandb_base_tags.append("w_sun_et_al")
     else:
         raise ValueError("Invalid value for 'what'")
-
-    # Initialize wandb if enabled
-    if use_wandb:
-        wandb.init(
-            notes=str(setup),
-            config=setup,
-            **wandb_params,
-            tags=wandb_base_tags,
-        )
-    else:
-        wandb.init(
-            mode="disabled",
-            notes=str(setup),
-            config=setup,
-            **wandb_params,
-            tags=wandb_base_tags,
-        )
 
     logger.success("wandb init done")
 
@@ -140,17 +123,53 @@ def main(
         metadata = metadata.sort_index()
 
         train_data, test_data, val_data, train_metadata, test_metadata, val_metadata = (
-            split_sun_et_al_data(data, metadata, test_study, val_study)
+            split_sun_et_al_data(data, metadata, test_study, [])
         )
+
+        # selecting val_study samples for each inner and outer cv loop combination
+        val_study_samples = []
+        for i in range(n_outer_cv_splits):
+            rng = np.random.default_rng(i)
+            selection = []
+            for _ in range(n_inner_cv_splits):
+                # Select a study
+                study = rng.choice(train_metadata["Project_1"].unique())
+                # Get data of that study
+                val_study_data = train_data[train_metadata["Project_1"] == study]
+                logger.warning(f"size of val study: {len(val_study_data)}")
+                # Leave out eval_k_shot in train (so select len(val_study_data) - eval_k_shot)
+                selection.append(rng.choice(val_study_data.index, len(val_study_data) - eval_k_shot, replace=False).tolist())
+                logger.warning(f"size of val study: {len(selection[-1])}")
+                
+            val_study_samples.append(selection)
+
+        logger.warning(f"studies selected: {val_study_samples}")
 
         train_labels = train_metadata["Group"]
         test_labels = test_metadata["Group"]
-        val_labels = val_metadata["Group"]
-        assert isinstance(train_labels, pd.Series)
+        # val_labels = val_metadata["Group"]
     else:
         raise ValueError("Invalid value for 'what'")
 
     logger.success("Data obtained")
+
+    # Initialize wandb if enabled
+    setup["val_study"] = val_study_samples
+    if use_wandb:
+        wandb.init(
+            notes=str(setup),
+            config=setup,
+            **wandb_params,
+            tags=wandb_base_tags,
+        )
+    else:
+        wandb.init(
+            mode="disabled",
+            notes=str(setup),
+            config=setup,
+            **wandb_params,
+            tags=wandb_base_tags,
+        )
 
     # log data statistics to wandb
     wandb.log(
@@ -161,14 +180,14 @@ def main(
         },
         step=0,
     )
-    wandb.log(
-        {
-            "Val data description": wandb.Table(
-                dataframe=val_data.describe().T.reset_index()
-            )
-        },
-        step=0,
-    )
+    # wandb.log(
+    #     {
+    #         "Val data description": wandb.Table(
+    #             dataframe=val_data.describe().T.reset_index()
+    #         )
+    #     },
+    #     step=0,
+    # )
     wandb.log(
         {
             "Test data description": wandb.Table(
@@ -186,14 +205,14 @@ def main(
         },
         step=0,
     )
-    wandb.log(
-        {
-            "Val data labels": wandb.Table(
-                dataframe=val_labels.value_counts(dropna=False).reset_index()
-            )
-        },
-        step=0,
-    )
+    # wandb.log(
+    #     {
+    #         "Val data labels": wandb.Table(
+    #             dataframe=val_labels.value_counts(dropna=False).reset_index()
+    #         )
+    #     },
+    #     step=0,
+    # )
     wandb.log(
         {
             "Test data labels": wandb.Table(
@@ -204,8 +223,8 @@ def main(
     )
 
     train_labels = encode_labels(label_preprocessor, train_labels, positive_class_label)
-    val_labels = encode_labels(label_preprocessor, val_labels, positive_class_label)
     test_labels = encode_labels(label_preprocessor, test_labels, positive_class_label)
+    # val_labels = encode_labels(label_preprocessor, val_labels, positive_class_label)
 
     train_scores = []
     test_scores = []
@@ -232,10 +251,8 @@ def main(
                 what,
                 train_data,
                 train_labels,
-                val_data,
-                val_labels,
+                val_study_samples[i],
                 n_inner_cv_splits,
-                eval_k_shot,
                 standard_pipeline,
                 scoring,
                 best_fit_scorer,
@@ -425,9 +442,9 @@ if __name__ == "__main__":
         "sun et al",
         "run_configs.rf_metalearning_baseline_for_sun_et_al",
         test_study="HanL_2021",
-        val_study="JieZ_2017",
+        # val_study="JieZ_2017",
         abundance_file="mpa4_species_profile_preprocessed.csv",
         metadata_file="sample_group_species_preprocessed.csv",
         eval_k_shot=10,
-        positive_class_label="Sick",
+        positive_class_label="Disease",
     )
