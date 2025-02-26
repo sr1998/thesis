@@ -318,16 +318,10 @@ def inner_cv_eval_for_baseline_metalearning(
     train_labels,
     val_data,
     val_labels,
-    support_set_indices,
     pipeline,
     scoring,
 ) -> dict:
-    train_data, train_labels, val_data, val_labels = (
-        extend_train_with_support_set_from_eval(
-            train_data, train_labels, val_data, val_labels, support_set_indices
-        )
-    )
-
+    
     pipeline.fit(train_data, train_labels)
     scores = get_scores(
         pipeline,
@@ -353,10 +347,8 @@ def hyp_param_eval_for_baseline_metalearning(
     what: str,
     train_data: pd.DataFrame,
     train_labels: pd.Series,
-    val_data: pd.DataFrame,
-    val_labels: pd.Series,
+    val_study_samples: list[object],
     n_inner_cv_splits: int,
-    eval_k_shot: int,
     standard_pipeline,
     scoring,
     best_fit_scorer,
@@ -373,24 +365,17 @@ def hyp_param_eval_for_baseline_metalearning(
     logger.info("pipeline:")
     print(pipeline)
 
-    # Select val indices to be used for training as "support set" for the val data
-    inner_cv_val_k_shot_indices = []
-    rng = np.random.default_rng(outer_cv_step)
-    for _ in range(n_inner_cv_splits):
-        inner_cv_val_k_shot_indices.append(
-            rng.choice(val_data.index, eval_k_shot, replace=False).tolist()
-        )
-
     # Evaluate the pipeline with the inner cross-validation
     results = []
-    for support_set_indices in inner_cv_val_k_shot_indices:
+    for i in range(n_inner_cv_splits):
+        val_data = train_data.loc[val_study_samples[i]]
+        val_labels = train_labels.loc[val_study_samples[i]]
         results.append(
             inner_cv_eval_for_baseline_metalearning(
-                train_data,
-                train_labels,
+                train_data.drop(index=val_study_samples[i]),
+                train_labels.drop(index=val_study_samples[i]),
                 val_data,
                 val_labels,
-                support_set_indices,
                 clone(pipeline),
                 scoring,
             )
