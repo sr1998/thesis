@@ -25,13 +25,13 @@ STUDIES=(
 
 # STUDIES=('JieZ_2017' 'WangQ_2021' 'ZengQ_2021' 'HanL_2021')
 # STUDIES=('QinJ_2012') 3:30
-STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
+TEST_STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
 mkdir "slurm_logs/${SLURM_JOB_NAME}/${STUDY}"
 
-LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.out"
-ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.err"
+LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.out"
+ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.err"
 
 # Redirect stdout and stderr to these files
 exec > "$LOG_FILE" 2> "$ERR_FILE"
@@ -66,7 +66,6 @@ srun apptainer exec \
     --what "sun et al" \
     --config_script "run_configs.rf_metalearning_baseline_for_sun_et_al" \
     --test_study "$TEST_STUDY" \
-    --val_study "$VAL_STUDY" \
     --abundance_file "mpa4_species_profile_preprocessed.csv"
     --metadata_file "sample_group_species_preprocessed.csv"
     --eval_k_shot 10 \
