@@ -196,7 +196,9 @@ def get_mgnify_data(
     return data, labels
 
 
-def get_sun_et_al_study_data(study: str, tax_level: str):
+def get_sun_et_al_study_data(
+    study: str, abundance_file: str | Path, metadata_file: str | Path
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Get the data and labels for the Sun et al. of a specific study and taxonomic level for learning.
 
     Args:
@@ -207,12 +209,12 @@ def get_sun_et_al_study_data(study: str, tax_level: str):
         The data and labels for the Sun et al. dataset.
     """
     data = pd.read_csv(
-        BASE_DATA_DIR / "sun_et_al_data" / f"mpa4_{tax_level}_profile_preprocessed.csv",
+        BASE_DATA_DIR / "sun_et_al_data" / abundance_file,
         index_col=0,
         header=0,
     )
     metadata = pd.read_csv(
-        BASE_DATA_DIR / "sun_et_al_data" / f"sample_group_{tax_level}_preprocessed.csv",
+        BASE_DATA_DIR / "sun_et_al_data" / metadata_file,
         header=0,
     )
 
@@ -225,3 +227,54 @@ def get_sun_et_al_study_data(study: str, tax_level: str):
     data = data.loc[labels.index]
 
     return data, labels
+
+
+def get_studies_desired_from_sun_et_al(
+    data: pd.DataFrame, metadata: pd.DataFrame, study: list
+):
+    """Get the studies desired from the Sun et al data.
+
+    Args:
+        data: The data to filter. Index should be samples.
+        metadata: The metadata to filter. Index should be samples.
+        studies: The studies to keep. Should be in the Project_1 column of the metadata.
+
+    Returns:
+        tuple: data, metadata dataframes with only the studies of interest
+    """
+    # Filter metadata to only include the studies of interest
+    metadata = metadata[metadata["Project_1"].isin(study)]
+
+    # Filter data to only include samples that are in the metadata
+    data = data.loc[metadata.index]
+
+    return data, metadata
+
+
+def split_sun_et_al_data(data: pd.DataFrame, metadata: pd.DataFrame, test, val):
+    """Split the data into train, test and validation sets.
+
+    Args:
+        data: The data to split. Index should be samples.
+        metadata: The metadata to split. Index should be samples.
+        test: The studies to use for testing.
+        val: The studies to use for validation.
+
+    Returns:
+        tuple: train, test, val dataframes
+    """
+    if not isinstance(test, list):
+        test = [test]
+    if not isinstance(val, list):
+        val = [val]
+
+    test_data, test_metadata = get_studies_desired_from_sun_et_al(data, metadata, test)
+    val_data, val_metadata = get_studies_desired_from_sun_et_al(data, metadata, val)
+
+    train_data = data.drop(test_data.index)
+    train_data = train_data.drop(val_data.index)
+
+    train_metadata = metadata.drop(index=test_metadata.index)
+    train_metadata = train_metadata.drop(index=val_metadata.index)
+
+    return train_data, test_data, val_data, train_metadata, test_metadata, val_metadata

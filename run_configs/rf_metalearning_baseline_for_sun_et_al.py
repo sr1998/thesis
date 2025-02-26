@@ -21,37 +21,15 @@ def get_setup():
     misc_config = {
         "wandb": True,  # whether to use wandb or not
         "wandb_params": {
-            "project": "thesis_baselines",
+            "project": "thesis_metalearning_inspired_baselines",
             "group": "RF",  # model name can be useful here
         },
         "verbose_pipeline": True,  # whether to print verbose output from the pipeline
         "cache_pipeline_steps": False,  # True giving errors
     }
 
-    # outer_cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
-    outer_cv_config = {
-        "type": ShuffleSplit,
-        "params": {"n_splits": 5, "test_size": 0.2, "random_state": 42},
-    }
-
-    inner_cv_config = {
-        "type": ShuffleSplit,
-        "params": {
-            "n_splits": 5,
-            "test_size": 0.2,
-        },  # don't provide random_state, as we want to change it per outer fold
-    }
-
-    # preprocessor_pipeline = create_pipeline(
-    #     [
-    #         ("normalizations_and_transformations", Normalizer(norm="l1")),
-    #         (
-    #             "feature_space_change",
-    #             "passthrough",
-    #         ),  # assumed to be SelectPercentile(MutualInfoClassif)
-    #     ],
-    #     misc_config,
-    # )
+    n_outer_cv_splits = 5
+    n_inner_cv_splits = 5
 
     label_preprocessor = LabelEncoder()
 
@@ -118,8 +96,8 @@ def get_setup():
 
     return {
         "misc_config": misc_config,
-        "outer_cv_config": outer_cv_config,
-        "inner_cv_config": inner_cv_config,
+        "n_outer_cv_splits": n_outer_cv_splits,
+        "n_inner_cv_splits": n_inner_cv_splits,
         "standard_pipeline": standard_pipeline,
         "label_preprocessor": label_preprocessor,
         "scoring": score_functions,

@@ -1,6 +1,10 @@
 import os
 import sys
 from importlib import import_module
+from pathlib import Path
+
+from src.data.dataloader import split_sun_et_al_data
+from src.helper_function import column_rename_for_sun_et_al_metadata, pca_reduction
 
 sys.path.append(".")
 
@@ -8,7 +12,6 @@ import fire
 import pandas as pd
 import torch
 from loguru import logger
-from sklearn.decomposition import PCA
 from sklearn.preprocessing import Normalizer
 from torch import nn
 from torch.utils.data import DataLoader
@@ -20,96 +23,11 @@ import wandb
 from src.global_vars import BASE_DATA_DIR
 
 
-def get_studies_desired_from_sun_et_al(
-    data: pd.DataFrame, metadata: pd.DataFrame, study: list
-):
-    """Get the studies desired from the Sun et al data.
-
-    Args:
-        data: The data to filter. Index should be samples.
-        metadata: The metadata to filter. Index should be samples.
-        studies: The studies to keep. Should be in the Project_1 column of the metadata.
-
-    Returns:
-        tuple: data, metadata dataframes with only the studies of interest
-    """
-    # Filter metadata to only include the studies of interest
-    metadata = metadata[metadata["Project_1"].isin(study)]
-
-    # Filter data to only include samples that are in the metadata
-    data = data.loc[metadata.index]
-
-    return data, metadata
-
-
-def split_sun_et_al_data(data: pd.DataFrame, metadata: pd.DataFrame, test, val):
-    """Split the data into train, test and validation sets.
-
-    Args:
-        data: The data to split. Index should be samples.
-        metadata: The metadata to split. Index should be samples.
-        test: The studies to use for testing.
-        val: The studies to use for validation.
-
-    Returns:
-        tuple: train, test, val dataframes
-    """
-    if not isinstance(test, list):
-        test = [test]
-    if not isinstance(val, list):
-        val = [val]
-
-    test_data, test_metadata = get_studies_desired_from_sun_et_al(data, metadata, test)
-    val_data, val_metadata = get_studies_desired_from_sun_et_al(data, metadata, val)
-
-    train_data = data.drop(test_data.index)
-    train_data = train_data.drop(val_data.index)
-
-    train_metadata = metadata.drop(index=test_metadata.index)
-    train_metadata = train_metadata.drop(index=val_metadata.index)
-
-    return train_data, test_data, val_data, train_metadata, test_metadata, val_metadata
-
-
-def column_rename_for_sun_et_al_metadata(metadata: pd.DataFrame) -> pd.DataFrame:
-    metadata = metadata[["Group", "Project_1"]]
-    metadata = metadata.rename(columns={"Group": "label", "Project_1": "project"})
-    return metadata
-
-
-def pca_reduction(
-    train_data,
-    test_data,
-    val_data,
-    n_components_reduction_factor: int,
-    use_cache: bool = False,
-):
-    if not use_cache:
-        pca = PCA(
-            n_components=int(train_data.shape[1] // n_components_reduction_factor)
-        )
-        print("fitting and transforming")
-        train_data = pd.DataFrame(pca.fit_transform(train_data), index=train_data.index)
-        print("transforming")
-        test_data = pd.DataFrame(pca.transform(test_data), index=test_data.index)
-        print("transforming")
-        val_data = pd.DataFrame(pca.transform(val_data), index=val_data.index)
-        train_data.to_csv("train_data_PCA.csv")
-        test_data.to_csv("test_data_PCA.csv")
-        val_data.to_csv("val_data_PCA.csv")
-    else:
-        train_data = pd.read_csv("train_data_PCA.csv", index_col=0)
-        test_data = pd.read_csv("test_data_PCA.csv", index_col=0)
-        val_data = pd.read_csv("val_data_PCA.csv", index_col=0)
-
-    return train_data, test_data, val_data
-
-
 def main(
     model_script: str,
     model_name: str,
-    abundance_file: pd.DataFrame,
-    metadata_file: pd.DataFrame,
+    abundance_file: str | Path,
+    metadata_file: str | Path,
     test_study: list,
     val_study: list,
     outer_lr_range: tuple[float, float],
@@ -135,7 +53,7 @@ def main(
     else:
         raise ValueError("Loss function not recognized.")
 
-    data_root_dir = f"{BASE_DATA_DIR}/sun_et_al_data/"
+    data_root_dir = BASE_DATA_DIR / "sun_et_al_data"
 
     sun_et_al_abundance = pd.read_csv(
         f"{data_root_dir}/{abundance_file}",
@@ -195,20 +113,20 @@ def main(
         "e_k" + str(eval_k_shot),
     ]
 
-    wand_name = f"{model_name}_{algorithm}_TS{test_study}_VS{val_study}_J{job_id}_T{tax_level}_TK{train_k_shot}_EK{eval_k_shot}"
+    wandb_name = f"{model_name}_{algorithm}_TS{test_study}_VS{val_study}_J{job_id}_T{tax_level}_TK{train_k_shot}_EK{eval_k_shot}"
 
     # Initialize wandb if enabled
     if use_wandb:
         wandb.init(
             project="meta-learning",
-            name=wand_name,
+            name=wandb_name,
             config=config,
             group=algorithm,
             tags=wandb_base_tags,
         )
     else:
         wandb.init(
-            name=wand_name,
+            name=wandb_name,
             mode="disabled",
             config=config,
             project="meta-learning",
@@ -295,7 +213,7 @@ def main(
 
     sampler = hf.BinaryFewShotBatchSampler(
         test,
-        train_k_shot,   # Has to be train_k_shot for now. Adjust MAML and Reptile algorithms (evaluation part) to be able to use eval_k_shot
+        train_k_shot,  # Has to be train_k_shot for now. Adjust MAML and Reptile algorithms (evaluation part) to be able to use eval_k_shot
         include_query=True,
         shuffle=False,
         shuffle_once=False,
@@ -343,8 +261,10 @@ def main(
             evaluate_train=True,
             val_dataloader=val_loader,
         )
-    elif algorithm == "Reptile":    # Not converging at all with some tested hyperparams. Wrong implementation maybe. To be figured out when time allows.
-            # Instantiate the Reptile meta-learner.
+    elif (
+        algorithm == "Reptile"
+    ):  # Not converging at all with some tested hyperparams. Wrong implementation maybe. To be figured out when time allows.
+        # Instantiate the Reptile meta-learner.
         reptile = rp_with_l2l.Reptile(
             model=model,
             train_n_gradient_steps=n_gradient_steps,
@@ -355,7 +275,7 @@ def main(
             outer_lr_range=outer_lr_range,
             betas=betas,
             k_shot=train_k_shot,
-            loss_fn=loss_fn
+            loss_fn=loss_fn,
         )
 
         reptile.fit(

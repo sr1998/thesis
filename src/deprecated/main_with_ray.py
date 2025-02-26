@@ -310,10 +310,10 @@ def main(
         best_model.fit(X_train, y_train)
 
         train_outer_cv_score = get_scores(
-            best_model, X_train, y_train, scoring, train_or_test="train"
+            best_model, X_train, y_train, scoring, score_name_prefix="train"
         )
         test_outer_cv_score = get_scores(
-            best_model, X_test, y_test, scoring, train_or_test="test"
+            best_model, X_test, y_test, scoring, score_name_prefix="test"
         )
 
         wandb.log(

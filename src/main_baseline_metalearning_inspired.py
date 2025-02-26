@@ -5,7 +5,10 @@ from pathlib import Path
 
 from sklearn.inspection import permutation_importance
 
-from src.data.dataloader import get_mgnify_data, get_sun_et_al_study_data
+from src.data.dataloader import (
+    split_sun_et_al_data,
+)
+from src.global_vars import BASE_DATA_DIR
 
 sys.path.append(".")
 import fire
@@ -13,15 +16,16 @@ import numpy as np
 import optuna
 import pandas as pd
 from loguru import logger
-from numpy.random import RandomState
 
 import wandb
 from src.helper_function import (
+    df_str_for_loguru,
     encode_labels,
+    extend_train_with_support_set_from_eval,
     get_pipeline,
     get_run_dir_for_experiment,
     get_scores,
-    hyp_param_eval_with_cv,
+    hyp_param_eval_for_baseline_metalearning,
 )
 
 
@@ -29,58 +33,22 @@ def main(
     what: str,
     config_script: str,
     *,
-    study: str | list[str],
+    test_study: list,
+    val_study: list,
     abundance_file: str | Path,  # for sun et al. data for now
     metadata_file: str | Path,  # for sun et al. data for now
-    summary_type: str | None = None,
-    pipeline_version: str | None = None,
-    label_col: str | None = None,
+    eval_k_shot: int,
     positive_class_label: str | None = None,
     metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
 ):
-    """Run the pipeline for the given study accessions and config script.
-
-    Args:
-        what: This decided what dataset is ran.
-        config_script: The path to the config script
-        study:
-            For mgnify: Leave out if all studies desired; if provided, only the summaries of
-                those studies are used if studies are given, they have to contain the desired
-                summary given by study download_label_start. For now only one study is supported.
-            For others: Give the study name that will give the right data. E.g. for sun et al.
-                give the Project_1 term desired so the right samples are selected.
-        summary_type: Required with mgnify. Indicates what summary file to use for the studies.
-            Possible values:
-                - GO_abundances
-                - GO-slim_abundances
-                - phylum_taxonomy_abundances_SSU
-                - taxonomy_abundances_SSU
-                - IPR_abundances
-                - ... (see MGnify API for more)
-        pipeline_version: Required with mgnify. Indicates what pipeline version to use.
-            Possible values:
-                - v3.0
-                - v4.0
-                - v4.1
-                - v5.0
-        label_col: Required with mgnify. Label column for classification.
-        positive_class_label: Required with mgnify. Positive class label to be used in label encoding.
-        metadata_cols_to_use_as_features: Metadata columns to use; leave empty for none, or give value "all" for all columns.
-        load_from_cache_if_available: This will reuse cross-validation splits if this same experiment has been done before.
-            Note: This is not implemented yet.
-        wandb_run_name: The name of the wandb run. Defaults to None.
-
-    Returns:
-        None
-
-    """
+    """Run the baseline pipeline for the baseline meta-learning inspired approach."""
     config_module = import_module(config_script)
     setup = config_module.get_setup()
     (
         misc_config,
-        outer_cv_config,
-        inner_cv_config,
+        n_outer_cv_splits,
+        n_inner_cv_splits,
         standard_pipeline,
         label_preprocessor,
         scoring,
@@ -91,22 +59,20 @@ def main(
     ) = setup.values()
 
     setup["what"] = what
-    setup["study"] = study
+    setup["test_study"] = test_study
+    setup["val_study"] = val_study
     setup["abundance_file"] = abundance_file
     setup["metadata_file"] = metadata_file
     tax_level = abundance_file.split("_")[1]
     setup["tax_level"] = tax_level
     setup["model"] = standard_pipeline.named_steps["model"].__class__.__name__
-    if what == "mgnify":
-        setup["summary_type"] = summary_type
-        setup["pipeline_version"] = pipeline_version
-        setup["label_col"] = label_col
     setup["positive_class_label"] = positive_class_label
     setup["metdata_cols_to_use_as_features"] = metadata_cols_to_use_as_features
 
     job_id = os.getenv("SLURM_JOB_ID")
-    wandb_name = f"w_{what}__d_{study}__j_{job_id}__t_{tax_level}"
-    wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
+    wandb_name = (
+        f"w_{what}__TS{test_study}_VS{val_study}_J{job_id}_T{tax_level}_EK{eval_k_shot}"
+    )
 
     # get misc config parameters
     use_wandb = misc_config["wandb"]
@@ -122,24 +88,15 @@ def main(
     logger.info("Setting up everything")
 
     wandb_base_tags = [
-        "d_" + str(study),
+        "t_s" + str(test_study),
+        "v_s" + str(val_study),
         "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
         "j_" + job_id if job_id else "j_local",
-        "t_" + tax_level,
+        "tax_" + tax_level,
+        "e_k" + str(eval_k_shot),
     ]
 
-    if what == "mgnify":
-        assert (
-            summary_type is not None
-            and pipeline_version is not None
-            and label_col is not None
-        ), "For mgnify, summary_type, pipeline_version and label_col must be provided as arguments."
-
-        wandb_base_tags.append("w_mgnify")
-        wandb_base_tags.append("s_" + summary_type)
-        wandb_base_tags.append("p_" + pipeline_version)
-        wandb_base_tags.append("l_" + label_col)
-    elif what == "sun et al":
+    if what == "sun et al":
         wandb_base_tags.append("w_sun_et_al")
     else:
         raise ValueError("Invalid value for 'what'")
@@ -164,16 +121,32 @@ def main(
     logger.success("wandb init done")
 
     # Load data
-    if what == "mgnify":
-        data, labels = get_mgnify_data(
-            study,
-            summary_type,
-            pipeline_version,
-            label_col,
-            metadata_cols_to_use_as_features,
+    if what == "sun et al":
+        data_root_dir = BASE_DATA_DIR / "sun_et_al_data"
+        data = pd.read_csv(
+            f"{data_root_dir}/{abundance_file}",
+            index_col=0,
+            header=0,
         )
-    elif what == "sun et al":
-        data, labels = get_sun_et_al_study_data(study, abundance_file, metadata_file)
+
+        metadata = pd.read_csv(
+            f"{data_root_dir}/{metadata_file}",
+            index_col=0,
+            header=0,
+        )
+
+        # Sort samples
+        data = data.sort_index()
+        metadata = metadata.sort_index()
+
+        train_data, test_data, val_data, train_metadata, test_metadata, val_metadata = (
+            split_sun_et_al_data(data, metadata, test_study, val_study)
+        )
+
+        train_labels = train_metadata["Group"]
+        test_labels = test_metadata["Group"]
+        val_labels = val_metadata["Group"]
+        assert isinstance(train_labels, pd.Series)
     else:
         raise ValueError("Invalid value for 'what'")
 
@@ -181,51 +154,88 @@ def main(
 
     # log data statistics to wandb
     wandb.log(
-        {"Data description": wandb.Table(dataframe=data.describe().T.reset_index())},
+        {
+            "Train data description": wandb.Table(
+                dataframe=train_data.describe().T.reset_index()
+            )
+        },
         step=0,
     )
     wandb.log(
         {
-            "labels": wandb.Table(
-                dataframe=labels.value_counts(dropna=False).reset_index()
+            "Val data description": wandb.Table(
+                dataframe=val_data.describe().T.reset_index()
+            )
+        },
+        step=0,
+    )
+    wandb.log(
+        {
+            "Test data description": wandb.Table(
+                dataframe=test_data.describe().T.reset_index()
             )
         },
         step=0,
     )
 
-    encoded_labels = encode_labels(label_preprocessor, labels, positive_class_label=positive_class_label).values
+    wandb.log(
+        {
+            "Train data labels": wandb.Table(
+                dataframe=train_labels.value_counts(dropna=False).reset_index()
+            )
+        },
+        step=0,
+    )
+    wandb.log(
+        {
+            "Val data labels": wandb.Table(
+                dataframe=val_labels.value_counts(dropna=False).reset_index()
+            )
+        },
+        step=0,
+    )
+    wandb.log(
+        {
+            "Test data labels": wandb.Table(
+                dataframe=test_labels.value_counts(dropna=False).reset_index()
+            )
+        },
+        step=0,
+    )
+
+    train_labels = encode_labels(label_preprocessor, train_labels, positive_class_label)
+    val_labels = encode_labels(label_preprocessor, val_labels, positive_class_label)
+    test_labels = encode_labels(label_preprocessor, test_labels, positive_class_label)
 
     train_scores = []
     test_scores = []
-    split_config = []
-
-    outer_cv = outer_cv_config["type"](**outer_cv_config["params"])
 
     logger.info("Starting with outer cv")
+    split_results = []
     # split_permutation_importance = pd.DataFrame()
     split_rf_importance_df = pd.DataFrame()
 
-    for i, (train_index, test_index) in enumerate(outer_cv.split(data, encoded_labels)):
-        # outer cv data split
-        X_train, X_test = data.iloc[train_index], data.iloc[test_index]
-        y_train, y_test = encoded_labels[train_index], encoded_labels[test_index]
+    # Select test indices to be used for training as "support set" for the test data
+    outer_cv_test_k_shot_indices = []
+    rng = np.random.default_rng(42)
+    for _ in range(n_outer_cv_splits):
+        k_shot_indices = rng.choice(test_data.index, eval_k_shot, replace=False)
+        outer_cv_test_k_shot_indices.append(k_shot_indices.tolist())
 
+    for i, support_set_indices in enumerate(outer_cv_test_k_shot_indices):
         # With random state defined like this, each experiment is reproducible but the inner cv splits are different per outer cv split
-        random_state = RandomState(i)
-
-        inner_cv = inner_cv_config["type"](
-            **inner_cv_config["params"], random_state=random_state
-        )
-
         optuna_study = optuna.create_study(
             direction=tuning_mode, study_name=f"outer_cv_{i}_for_{wandb.run.name}"
         )
         optuna_study.optimize(
-            lambda trial: hyp_param_eval_with_cv(
+            lambda trial: hyp_param_eval_for_baseline_metalearning(
                 what,
-                X_train,
-                y_train,
-                inner_cv,
+                train_data,
+                train_labels,
+                val_data,
+                val_labels,
+                n_inner_cv_splits,
+                eval_k_shot,
                 standard_pipeline,
                 scoring,
                 best_fit_scorer,
@@ -236,6 +246,20 @@ def main(
             n_trials=tuning_num_samples,
         )
 
+        # outer cv data split (done here, as we need to extend the train data with the support set)
+        (
+            train_data_extended,
+            train_labels_extended,
+            test_query_data,
+            test_query_labels,
+        ) = extend_train_with_support_set_from_eval(
+            train_data,
+            train_labels,
+            test_data,
+            test_labels,
+            support_set_indices,
+        )
+
         best_trial = optuna_study.best_trial
         # save best trial parameters + split for this loop
         best_trial_params = best_trial.params
@@ -243,27 +267,28 @@ def main(
         # Convert to a dictionary format for easier table storage
         split_entry = {
             "outer_cv_split": i,
-            "train_size": len(train_index),
-            "test_size": len(test_index),
+            "train_size": len(train_data_extended),
+            "test_size": len(test_query_data),
             **best_trial_params,  # Add all hyperparameters
-            "train_indices": ";".join(
-                map(str, train_index)
-            ),  # Store indices as a semicolon-separated string
-            "test_indices": ";".join(map(str, test_index)),
+            "test_indices": ";".join(map(str, support_set_indices)),
         }
 
-        split_config.append(split_entry)
+        split_results.append(split_entry)
 
         best_model = get_pipeline(
             what, standard_pipeline, search_space_sampler, best_trial
         )
-        best_model.fit(X_train, y_train)
+        best_model.fit(train_data_extended, train_labels_extended)
 
         train_outer_cv_score = get_scores(
-            best_model, X_train, y_train, scoring, score_name_prefix="train"
+            best_model,
+            train_data_extended,
+            train_labels_extended,
+            scoring,
+            score_name_prefix="train",
         )
         test_outer_cv_score = get_scores(
-            best_model, X_test, y_test, scoring, score_name_prefix="test"
+            best_model, test_query_data, test_query_labels, scoring, score_name_prefix="test"
         )
 
         # Permutation importance (all zero. I guess due to correlation of features)
@@ -293,7 +318,7 @@ def main(
 
             rf_importance_df = pd.DataFrame(
                 {
-                    "Feature": X_train.columns,
+                    "Feature": train_data_extended.columns,
                     "RF Importance": rf_importance,
                     "Outer CV Split": i,
                 }
@@ -341,7 +366,7 @@ def main(
     )
 
     # Save all outer CV splits and best trial parameters
-    results_df = pd.DataFrame(split_config)
+    results_df = pd.DataFrame(split_results)
     results_path = get_run_dir_for_experiment(misc_config) / "outer_cv_results.csv"
     results_df.to_csv(results_path, index=False)
     wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
@@ -394,15 +419,15 @@ def main(
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    # fire.Fire(main)
 
-    # main(
-    #     "mgnify",
-    #     "run_configs.simple_rf_baseline_for_optuna",
-    #     tax_level="species",
-    #     study=["MGYS00003677"],
-    #     summary_type="GO_abundances",
-    #     pipeline_version="v4.1",
-    #     label_col="disease status__biosamples",
-    #     positive_class_label="Sick",
-    # )
+    main(
+        "sun et al",
+        "run_configs.rf_metalearning_baseline_for_sun_et_al",
+        test_study="HanL_2021",
+        val_study="JieZ_2017",
+        abundance_file="mpa4_species_profile_preprocessed.csv",
+        metadata_file="sample_group_species_preprocessed.csv",
+        eval_k_shot=10,
+        positive_class_label="Sick",
+    )
