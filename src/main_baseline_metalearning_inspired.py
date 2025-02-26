@@ -419,15 +419,15 @@ def main(
 
 
 if __name__ == "__main__":
-    # fire.Fire(main)
+    fire.Fire(main)
 
-    main(
-        "sun et al",
-        "run_configs.rf_metalearning_baseline_for_sun_et_al",
-        test_study="HanL_2021",
-        val_study="JieZ_2017",
-        abundance_file="mpa4_species_profile_preprocessed.csv",
-        metadata_file="sample_group_species_preprocessed.csv",
-        eval_k_shot=10,
-        positive_class_label="Sick",
-    )
+    # main(
+    #     "sun et al",
+    #     "run_configs.rf_metalearning_baseline_for_sun_et_al",
+    #     test_study="HanL_2021",
+    #     val_study="JieZ_2017",
+    #     abundance_file="mpa4_species_profile_preprocessed.csv",
+    #     metadata_file="sample_group_species_preprocessed.csv",
+    #     eval_k_shot=10,
+    #     positive_class_label="Disease",
+    # )

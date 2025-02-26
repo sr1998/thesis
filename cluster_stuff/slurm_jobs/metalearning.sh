@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --job-name="maml_base"
+#SBATCH --job-name="metalearning_base"
 #SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
 #SBATCH --time=01:30:00            # Request run time (wall-clock). Default is 1 minute
@@ -58,7 +58,7 @@ srun apptainer exec \
     --outer_lr_range="(1, 1)" \
     --inner_lr_range="(0.5, 0.5)" \
     --inner_rl_reduction_factor=2 \
-    --n_epochs=500 \
+    --n_epochs=150 \
     --train_k_shot=10 \
     --n_gradient_steps=5 \
     --n_parallel_tasks=5 \
