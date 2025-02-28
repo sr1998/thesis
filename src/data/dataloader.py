@@ -1,5 +1,8 @@
+import json
+import os
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 from loguru import logger
 
@@ -278,3 +281,108 @@ def split_sun_et_al_data(data: pd.DataFrame, metadata: pd.DataFrame, test, val):
     train_metadata = train_metadata.drop(index=val_metadata.index)
 
     return train_data, test_data, val_data, train_metadata, test_metadata, val_metadata
+
+
+def get_cross_validation_sun_et_al_data_splits(
+    abundance_data: pd.DataFrame,
+    metadata: pd.DataFrame,
+    *,
+    test_study: str,
+    k_shot: int,
+    balanced_or_unbalanced: str,
+    n_outer_splits: int,
+    n_inner_splits: int,
+    save_splits: bool = True,
+) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Get the cross validation data splits for the Sun et al. dataset.
+
+    This is reproducible as the random number generator is seeded based on hashing the test_study.
+
+    # cross_val_data_selection =
+        # {outer_loop_i:
+        #    tuple(
+        #      [{test_support_indices} * k_shot],
+        #      {inner_loop_j: tuple([val_study_name, {val_support_indices} * k_shot])}
+        #      )
+        #  }
+
+    """
+    # For now only unbalanced supported # TODO FIXME
+
+    # Reproducible based on test_study and k_shot
+    rng = np.random.default_rng(abs(hash(test_study)) + k_shot)
+
+    study_names: list = metadata["Project_1"].unique().tolist()
+    test_metadata_df = metadata[metadata["Project_1"] == test_study]
+    test_data_df = abundance_data.loc[test_metadata_df.index]
+    train_metadata_df = metadata.drop(index=test_metadata_df.index)
+    train_data_df = abundance_data.drop(index=test_data_df.index)
+
+    # if test_study can't provide 2*k_shot samples for the fewest occuring label, skip it and log
+    min_label_count = test_metadata_df["Group"].value_counts().min()
+    if min_label_count < 2 * k_shot:
+        logger.warning(
+            f"{test_study} can't give with 2*{k_shot} samples for the fewest occuring label. Falling back to a lower k_shot value.\nCANCEL IF DESIRED."
+        )
+        k_shot = min_label_count // 2
+
+    remaining_studies = [study for study in study_names if study != test_study]
+    cross_val_data_selection = {}
+
+    # Group test metadata so each class is sampled with k_shot exactly for support set
+    grouped_test_metadata = test_metadata_df.groupby("Group")
+    for i in range(n_outer_splits):
+        # Sample outer cross-validation support per class
+        test_support_set_idx = []
+        for group, labels in grouped_test_metadata.groups.items():
+            test_support_set_idx.extend(
+                rng.choice(labels, size=k_shot, replace=False).tolist()
+            )
+
+        inner_loop_data_selection = {}
+        # Choose a val study and sample inner cross-validation support sets for this outer loop
+        for j in range(n_inner_splits):
+            study_selected = rng.choice(remaining_studies, 1).item()
+            val_metadata = train_metadata_df[
+                train_metadata_df["Project_1"] == study_selected
+            ]
+            # if val_study can't provide 2*k_shot samples for the fewest occuring label, get another study
+            while val_metadata["Group"].value_counts().min() < 2 * k_shot:
+                study_selected = rng.choice(remaining_studies, 1).item()
+                val_metadata = train_metadata_df[
+                    train_metadata_df["Project_1"] == study_selected
+                ]
+
+            # Sample inner cross-validation support per class
+            val_support_set_idx = []
+            for group, labels in val_metadata.groupby("Group").groups.items():
+                val_support_set_idx.extend(
+                    rng.choice(labels, k_shot, replace=False).tolist()
+                )
+            inner_loop_data_selection[j] = (study_selected, val_support_set_idx)
+
+        # Add data selection to cross_val_data_selection
+        cross_val_data_selection[i] = (
+            test_support_set_idx,
+            inner_loop_data_selection,
+        )
+
+        if save_splits:
+            save_in = BASE_DATA_DIR / "sun_et_al_data" / "selected_data_splits"
+            os.makedirs(save_in, exist_ok=True)
+            file_name = f"{test_study}_{k_shot}shot_{balanced_or_unbalanced}.json"
+            if not os.path.exists(save_in / file_name):
+                with open(save_in / file_name, "w") as f:
+                    json.dump(cross_val_data_selection, f, indent=4)
+            else:
+                logger.debug(
+                    f"File {file_name} already exists in {save_in}. Not saving."
+                )
+
+    return (
+        cross_val_data_selection,
+        train_data_df,
+        train_metadata_df,
+        test_data_df,
+        test_metadata_df,
+    )
