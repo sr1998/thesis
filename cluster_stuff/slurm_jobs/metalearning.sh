@@ -57,9 +57,6 @@ nvidia-smi
 
 # Run script
 # Note: There cannot be any characters incuding space behind the `\` symbol.
-python -m src.main_metalearning
---abundance_file "mpa4_species_profile_preprocessed.csv"  \
---test_study "HanL_2021" --balanced_or_unbalanced "balanced" --n_gradient_steps 2 --n_parallel_tasks 5 --n_epochs 10 --train_k_shot 10
 
 srun apptainer exec \
     -B $HOME:$HOME \
@@ -76,7 +73,6 @@ srun apptainer exec \
     --balanced_or_unbalanced "balanced" \
     --n_gradient_steps 5 \
     --n_parallel_tasks 5 \
-    --n_epochs 10 \
     --train_k_shot 10 \
     
     # --what "sun et al" \

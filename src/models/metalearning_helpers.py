@@ -206,7 +206,7 @@ def hyp_param_val_for_metalearning(
     wandb_data.update({"std/" + k: v for k, v in cross_val_results_std.items()})
 
     # log to wandb
-    wandb.log({str(outer_cv_step): wandb_data, "trial": trial.number})
+    wandb.log({str(outer_cv_step) + "trial_summary": wandb_data, "trial": trial.number})
 
     trial.set_user_attr(
         "actual_epochs", ceil(np.mean(cross_val_results["actual_epochs"]).item())

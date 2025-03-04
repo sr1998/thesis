@@ -118,7 +118,7 @@ def main(
     tax_level = abundance_file.split("_")[1]
     config = {
         # "model_name": model_name,
-        "what": datasource,
+        "datasource": datasource,
         "algorithm": algorithm,
         "abundance_file": abundance_file,
         "metadata_file": metadata_file,

@@ -59,11 +59,11 @@ def get_setup():
             "model__activation": model__activation,
         }
     
-    n_outer_splits = 5
+    n_outer_splits = 10
     n_inner_splits = 5
     tuning_mode = "maximize"
     best_fit_scorer = "f1"
-    tuning_num_samples = 100
+    tuning_num_samples = 50
 
     return {
         "n_outer_splits": n_outer_splits,
