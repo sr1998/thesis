@@ -22,6 +22,8 @@ STUDIES=(
     'YangY_2021' 'YeZ_2018' 'YeZ_2020' 'YeohYK_2021' 'YuJ_2017'
     'ZhangX_2015' 'ZhongH_2019' 'ZhouC_2020' 'ZhuF_2020'
     'ZhuJ_2018' 'ZhuQ_2021' 'ZuoK_2019'
+    'JieZ_2017' 'WangQ_2021' 'ZengQ_2021' 'HanL_2021'
+    'QinJ_2012'
 )
 
 STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
