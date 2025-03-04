@@ -42,8 +42,8 @@ def main(
     # outer_lr_range: tuple[float, float],  # optimization
     # inner_lr_range: tuple[float, float],  # optimization
     # inner_rl_reduction_factor: int,       # optimization
-    n_gradient_steps: int,
-    n_parallel_tasks: int,
+    n_gradient_steps: int,  # TODO Could be a hyperparam
+    n_parallel_tasks: int,  # TODO Could be a hyperparam
     train_k_shot: int,
     # eval_k_shot: int = None,              # skip
     # n_components_reduction_factor: int = 0,  # 0 or 1 for no PCA at all   # skip

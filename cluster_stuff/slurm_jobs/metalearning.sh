@@ -12,20 +12,32 @@
 
 # If you use DATASETS_ROOT inside your script otherwise remove
 # export DATASETS_ROOT="/scratch/$USER/datasets"
+ALGORITHM="MAML"
+STUDIES=(
+    'ChenB_2020' 'ChuY_2021' 'HeQ_2017' 'HuY_2019'
+    'HuangR_2020' 'LiJ_2017' 'LiR_2021'
+    'LiuP_2021' 'LiuR_2017' 'LuW_2018' 'MaoL_2021'
+    'QiX_2019' 'QianY_2020' 'QinN_2014' 'WanY_2021'
+    'WangM_2019' 'WangX_2020' 'WengY_2019' 'YanQ_2017'
+    'YangY_2021' 'YeZ_2018' 'YeZ_2020' 'YeohYK_2021' 'YuJ_2017'
+    'ZhangX_2015' 'ZhongH_2019' 'ZhouC_2020' 'ZhuF_2020'
+    'ZhuJ_2018' 'ZhuQ_2021' 'ZuoK_2019'
+)
+
+STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
+
+mkdir "slurm_logs/${SLURM_JOB_NAME}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}_${STUDY}"
+
+LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}_${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.out"
+ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}_${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.err"
+
+# Redirect stdout and stderr to these files
+exec > "$LOG_FILE" 2> "$ERR_FILE"
 
 # Assuming you have a dedicated directory for *.sif files
 export APPTAINER_ROOT="/tudelft.net/staff-umbrella/abeellabstudents/sramezani"
 export APPTAINER_NAME="apptainer-for-thesis.sif"
-
-ALGORITHM="MAML"
-mkdir "slurm_logs/${SLURM_JOB_NAME}"
-mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}"
-
-LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${SLURM_JOB_ID}.out"
-ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${SLURM_JOB_ID}.err"
-
-# Redirect stdout and stderr to these files
-exec > "$LOG_FILE" 2> "$ERR_FILE"
 
 # for WANDB to work
 curl https://curl.se/ca/cacert.pem -o ./cacert.pem
@@ -43,31 +55,28 @@ nvidia-smi
 
 # Run script
 # Note: There cannot be any characters incuding space behind the `\` symbol.
+python -m src.main_metalearning
+--abundance_file "mpa4_species_profile_preprocessed.csv"  \
+--test_study "HanL_2021" --balanced_or_unbalanced "balanced" --n_gradient_steps 2 --n_parallel_tasks 5 --n_epochs 10 --train_k_shot 10
+
 srun apptainer exec \
     -B $HOME:$HOME \
     --env-file $HOME/.env \
     --nv \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_meta_learning \
-    --model_script="src.models.models" \
-    --model_name="model2" \
-    --abundance_file="mpa4_species_profile_preprocessed.csv" \
-    --metadata_file="sample_group_species_preprocessed.csv" \
-    --test_study="" \
-    --val_study="JieZ_2017" \
-    --outer_lr_range="(1, 1)" \
-    --inner_lr_range="(0.5, 0.5)" \
-    --inner_rl_reduction_factor=2 \
-    --n_epochs=150 \
-    --train_k_shot=10 \
-    --n_gradient_steps=5 \
-    --n_parallel_tasks=5 \
-    --n_components_reduction_factor=0 \
-    --use_cached_pca=False \
-    --do_normalization_before_scaling=True \
-    --scale_factor_before_training=100 \
-    --loss_fn="BCELog" \
+    --datasource="sun et al" \
+    --config_script="run_configs.maml" \
     --algorithm="${ALGORITHM}" \
+    --abundance_file="mpa4_species_profile_preprocessed.csv" \
+    --metadata_file="sample_group_species_preprocessed2.csv" \
+    --test_study="$STUDY" \
+    --balanced_or_unbalanced "balanced" \
+    --n_gradient_steps 5 \
+    --n_parallel_tasks 5 \
+    --n_epochs 10 \
+    --train_k_shot 10 \
+    
     # --what "sun et al" \
     # --config_script "run_configs.rf_baseline_for_sun_et_al" \
     # --study "JieZ_2017"\
