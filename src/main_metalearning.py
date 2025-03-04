@@ -3,8 +3,18 @@ import sys
 from importlib import import_module
 from pathlib import Path
 
-from src.data.dataloader import split_sun_et_al_data
-from src.helper_function import column_rename_for_sun_et_al_metadata, pca_reduction
+import optuna
+
+from src.data.dataloader import (
+    get_cross_validation_sun_et_al_data_splits,
+)
+from src.helper_function import (
+    get_run_dir_for_experiment,
+)
+from src.models.metalearning_helpers import (
+    get_metalearning_model_from_trial,
+    hyp_param_val_for_metalearning,
+)
 
 sys.path.append(".")
 
@@ -12,60 +22,89 @@ import fire
 import pandas as pd
 import torch
 from loguru import logger
-from sklearn.preprocessing import Normalizer
 from torch import nn
-from torch.utils.data import DataLoader
 
-import src.data.sun_et_al as hf
-import src.models.maml_with_l2l as maml_with_l2l
-import src.models.reptile_with_l2l as rp_with_l2l
 import wandb
 from src.global_vars import BASE_DATA_DIR
 
 
 def main(
-    model_script: str,
-    model_name: str,
+    # model_script: str,                    # optimization
+    # model_name: str,                      # optimization
+    datasource: str,
+    config_script: str,
+    algorithm: str,
     abundance_file: str | Path,
     metadata_file: str | Path,
-    test_study: list,
-    val_study: list,
-    outer_lr_range: tuple[float, float],
-    inner_lr_range: tuple[float, float],
-    inner_rl_reduction_factor: int,
+    test_study: str,
+    balanced_or_unbalanced: str,
+    # val_study: list,                      # random selection done
+    # outer_lr_range: tuple[float, float],  # optimization
+    # inner_lr_range: tuple[float, float],  # optimization
+    # inner_rl_reduction_factor: int,       # optimization
     n_gradient_steps: int,
     n_parallel_tasks: int,
-    n_epochs: int,
     train_k_shot: int,
-    eval_k_shot: int = None,
-    n_components_reduction_factor: int = 0,  # 0 or 1 for no PCA at all
-    use_cached_pca: bool = False,
-    do_normalization_before_scaling: bool = True,
-    scale_factor_before_training: int = 100,
+    # eval_k_shot: int = None,              # skip
+    # n_components_reduction_factor: int = 0,  # 0 or 1 for no PCA at all   # skip
+    # use_cached_pca: bool = False,         # skip
+    # do_normalization_before_scaling: bool = True, # optimization
+    # scale_factor_before_training: int = 100,      # optimization
     loss_fn: str = "BCELog",
     betas: tuple[float, float] = (0.0, 0.999),
     use_wandb: bool = True,
     features_to_use: list[str] = None,
-    algorithm: str = "MAML",
 ):
+    config_module = import_module(config_script)
+    setup = config_module.get_setup()
+    (
+        n_outer_splits,
+        n_inner_splits,
+        tuning_mode,
+        best_fit_scorer,
+        tuning_num_samples,
+        search_space_sampler,
+    ) = setup.values()
+
     if loss_fn == "BCELog":
         loss_fn = nn.BCEWithLogitsLoss()
     else:
         raise ValueError("Loss function not recognized.")
 
-    data_root_dir = BASE_DATA_DIR / "sun_et_al_data"
+    if datasource == "sun et al":
+        data_root_dir = BASE_DATA_DIR / "sun_et_al_data"
 
-    sun_et_al_abundance = pd.read_csv(
-        f"{data_root_dir}/{abundance_file}",
-        index_col=0,
-        header=0,
-    )
+        # Read data and metadata
+        sun_et_al_abundance = pd.read_csv(
+            f"{data_root_dir}/{abundance_file}",
+            index_col=0,
+            header=0,
+        )
+        sun_et_al_metadata = pd.read_csv(
+            f"{data_root_dir}/{metadata_file}",
+            index_col=0,
+            header=0,
+        )
 
-    sun_et_al_metadata = pd.read_csv(
-        f"{data_root_dir}/{metadata_file}",
-        index_col=0,
-        header=0,
-    )
+        if features_to_use:
+            sun_et_al_abundance = sun_et_al_abundance.loc[:, features_to_use]
+
+        # Get the data splits: outer and inner cross val splits
+        (
+            cross_val_data_selection,
+            train_data,
+            train_metadata,
+            test_data,
+            test_metadata,
+        ) = get_cross_validation_sun_et_al_data_splits(
+            sun_et_al_abundance,
+            sun_et_al_metadata,
+            test_study=test_study,
+            k_shot=train_k_shot,
+            balanced_or_unbalanced=balanced_or_unbalanced,
+            n_outer_splits=n_outer_splits,
+            n_inner_splits=n_inner_splits,
+        )
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -74,46 +113,56 @@ def main(
     # logger.add(logger_path, colorize=True, level="DEBUG")
     # logger.info("Setting up everything")
 
+    # Set up wandb
     job_id = os.getenv("SLURM_JOB_ID")
     tax_level = abundance_file.split("_")[1]
     config = {
-        "model_name": model_name,
+        # "model_name": model_name,
+        "what": datasource,
         "algorithm": algorithm,
         "abundance_file": abundance_file,
         "metadata_file": metadata_file,
         "test_study": test_study,
-        "val_study": val_study,
-        "outer_lr_range": outer_lr_range,
-        "inner_lr_range": inner_lr_range,
-        "inner_rl_reduction_factor": inner_rl_reduction_factor,
+        "balanced_or_unbalanced": balanced_or_unbalanced,
+        # "val_study": val_study,
+        # "outer_lr_range": outer_lr_range,
+        # "inner_lr_range": inner_lr_range,
+        # "inner_rl_reduction_factor": inner_rl_reduction_factor,
         "n_gradient_steps": n_gradient_steps,
         "n_parallel_tasks": n_parallel_tasks,
-        "n_epochs": n_epochs,
         "train_k_shot": train_k_shot,
-        "eval_k_shot": eval_k_shot,
-        "n_components_reduction_factor": n_components_reduction_factor,
-        "use_cache_pca": use_cached_pca,
-        "do_normalization_before_scaling": do_normalization_before_scaling,
-        "scale_factor_before_training": scale_factor_before_training,
+        # "eval_k_shot": eval_k_shot,
+        # "n_components_reduction_factor": n_components_reduction_factor,
+        # "use_cache_pca": use_cached_pca,
+        # "do_normalization_before_scaling": do_normalization_before_scaling,
+        # "scale_factor_before_training": scale_factor_before_training,
         "loss_fn": loss_fn,
         "use_wandb": use_wandb,
         "device": device,
         "job_id": job_id,
         "features_to_use": features_to_use,
-        "model_script": model_script,
+        # "model_script": model_script,
+        "n_outer_splits": n_outer_splits,
+        "n_inner_splits": n_inner_splits,
+        "tuning_mode": tuning_mode,
+        "best_fit_scorer": best_fit_scorer,
+        "tuning_num_samples": tuning_num_samples,
+        "search_space_sampler": search_space_sampler,
     }
     wandb_base_tags = [
         "t_s" + str(test_study),
-        "v_s" + str(val_study),
-        "m_" + model_name,
+        # "v_s" + str(val_study),
+        # "m_" + model_name,
         "a_" + algorithm,
         "j_" + job_id if job_id else "j_local",
         "tax_" + tax_level,
         "t_k" + str(train_k_shot),
-        "e_k" + str(eval_k_shot),
+        "w_" + datasource,
+        balanced_or_unbalanced,
+        # "e_k" + str(eval_k_shot),
     ]
 
-    wandb_name = f"{model_name}_{algorithm}_TS{test_study}_VS{val_study}_J{job_id}_T{tax_level}_TK{train_k_shot}_EK{eval_k_shot}"
+    wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_J{job_id}"
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -136,155 +185,114 @@ def main(
 
     logger.success("wandb init done")
 
-    if features_to_use:
-        sun_et_al_abundance = sun_et_al_abundance.loc[:, features_to_use]
+    train_scores = []
+    test_scores = []
+    split_config = []
 
-    sun_et_al_metadata = sun_et_al_metadata.sort_index()
-    sun_et_al_abundance = sun_et_al_abundance.sort_index()
-
-    train_data, test_data, val_data, train_metadata, test_metadata, val_metadata = (
-        split_sun_et_al_data(
-            sun_et_al_abundance, sun_et_al_metadata, test_study, val_study
+    for i_outer_split, (
+        test_support_set,
+        inner_loop_splits,
+    ) in cross_val_data_selection.items():
+        optuna_study = optuna.create_study(
+            direction=tuning_mode,
+            study_name=f"outer_cv_{i_outer_split}_for_{wandb.run.name}",
         )
-    )
-
-    if n_components_reduction_factor != 0 and n_components_reduction_factor != 1:
-        train_data, test_data, val_data = pca_reduction(
-            train_data, test_data, val_data, use_cache=use_cached_pca
-        )
-
-    # tts
-    # train_data = preprocessing_functions.total_sum_scaling(train_data)
-    # test_data = preprocessing_functions.total_sum_scaling(test_data)
-    # val_data = preprocessing_functions.total_sum_scaling(val_data)
-
-    # centered log ratio transform
-    # replace_zero_with = train_data[train_data > 0].min().min() / 100
-    # train_data = preprocessing_functions.centered_log_ratio(
-    #     train_data, replace_zero_with=replace_zero_with
-    # )
-    # test_data = preprocessing_functions.centered_log_ratio(
-    #     test_data, replace_zero_with=replace_zero_with
-    # )
-    # val_data = preprocessing_functions.centered_log_ratio(
-    #     val_data, replace_zero_with=replace_zero_with
-    # )
-
-    # normalize the data for deep learning
-    if do_normalization_before_scaling:
-        train_data = pd.DataFrame(
-            Normalizer().fit_transform(train_data),
-            index=train_data.index,
-            columns=train_data.columns,
-        )
-        if test_study:
-            test_data = pd.DataFrame(
-                Normalizer().fit_transform(test_data),
-                index=test_data.index,
-                columns=test_data.columns,
-            )
-        val_data = pd.DataFrame(
-            Normalizer().fit_transform(val_data),
-            index=val_data.index,
-            columns=val_data.columns,
+        optuna_study.optimize(
+            lambda trial: hyp_param_val_for_metalearning(
+                algorithm,
+                inner_loop_splits,
+                train_data,
+                train_metadata,
+                train_k_shot,
+                train_k_shot,
+                search_space_sampler,
+                trial,
+                config,
+                i_outer_split,
+            ),
+            n_trials=tuning_num_samples,
         )
 
-    train_data = train_data * scale_factor_before_training
-    test_data = test_data * scale_factor_before_training
-    val_data = val_data * scale_factor_before_training
-
-    train_metadata = column_rename_for_sun_et_al_metadata(train_metadata)
-    test_metadata = column_rename_for_sun_et_al_metadata(test_metadata)
-    val_metadata = column_rename_for_sun_et_al_metadata(val_metadata)
-
-    # Create Datasets for DataLoader
-    train = hf.MicrobiomeDataset(train_data, train_metadata)
-    test = hf.MicrobiomeDataset(test_data, test_metadata)
-    val = hf.MicrobiomeDataset(val_data, val_metadata)
-
-    # Create DataLoaders
-    sampler = hf.BinaryFewShotBatchSampler(
-        train, train_k_shot, include_query=True, shuffle=True
-    )
-    train_loader = DataLoader(train, batch_sampler=sampler)
-
-    if eval_k_shot is None:
-        eval_k_shot = train_k_shot
-
-    sampler = hf.BinaryFewShotBatchSampler(
-        test,
-        train_k_shot,  # Has to be train_k_shot for now. Adjust MAML and Reptile algorithms (evaluation part) to be able to use eval_k_shot
-        include_query=True,
-        shuffle=False,
-        shuffle_once=False,
-        training=False,
-    )
-    test_loader = DataLoader(test, batch_sampler=sampler)
-
-    sampler = hf.BinaryFewShotBatchSampler(
-        val,
-        train_k_shot,
-        include_query=True,
-        shuffle=False,
-        shuffle_once=False,
-        training=False,
-    )
-    val_loader = DataLoader(val, batch_sampler=sampler)
-
-    # Get model
-    model_module = import_module(model_script)
-    n_features = train_data.shape[1]
-    assert (
-        n_features == test_data.shape[1] == val_data.shape[1]
-    ), "Number of features of train, test and val must be the same."
-
-    # Simple model to test
-    model = model_module.get_model(model_name)(n_features).to(device)
-
-    if algorithm == "MAML":
-        MAML = maml_with_l2l.MAML(
-            model=model,
-            train_n_gradient_steps=n_gradient_steps,
-            eval_n_gradient_steps=n_gradient_steps,
-            device=device,
-            inner_lr_range=inner_lr_range,
-            inner_rl_reduction_factor=inner_rl_reduction_factor,
-            outer_lr_range=outer_lr_range,
-            k_shot=train_k_shot,
-            loss_fn=loss_fn,
+        best_trial = optuna_study.best_trial
+        # save best trial parameters + split for this loop
+        best_trial_params = best_trial.params
+        best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+        split_config.append(
+            {
+                "outer_cv_split": i_outer_split,
+                **best_trial_params,
+            }
         )
 
-        MAML.fit(
+        # Train the best model
+        best_trial_config = search_space_sampler(best_trial)
+        best_model, train_loader, test_loader = get_metalearning_model_from_trial(
+            train_data,
+            test_data,
+            train_metadata,
+            test_metadata,
+            train_k_shot,
+            train_k_shot,
+            test_support_set,
+            algorithm,
+            best_trial_config,
+            config,
+        )
+
+        train_res, test_res = best_model.fit(
             train_dataloader=train_loader,
-            n_epochs=n_epochs,
+            n_epochs=int(best_trial.user_attrs["actual_epochs"] * 1.1),  # 10% more epochs
             n_parallel_tasks=n_parallel_tasks,
-            evaluate_train=True,
-            val_dataloader=val_loader,
-        )
-    elif (
-        algorithm == "Reptile"
-    ):  # Not converging at all with some tested hyperparams. Wrong implementation maybe. To be figured out when time allows.
-        # Instantiate the Reptile meta-learner.
-        reptile = rp_with_l2l.Reptile(
-            model=model,
-            train_n_gradient_steps=n_gradient_steps,
-            eval_n_gradient_steps=n_gradient_steps,
-            device=device,
-            inner_lr_range=inner_lr_range,
-            inner_rl_reduction_factor=inner_rl_reduction_factor,
-            outer_lr_range=outer_lr_range,
-            betas=betas,
-            k_shot=train_k_shot,
-            loss_fn=loss_fn,
+            eval_dataloader=test_loader,
+            val_or_test="test",
+            log_metrics=True,
+            score_name_prefix=f"outer_fold_{i_outer_split}_fit",
         )
 
-        reptile.fit(
-            train_dataloader=train_loader,
-            n_epochs=n_epochs,
-            n_parallel_tasks=n_parallel_tasks,
-            evaluate_train=True,
-            val_dataloader=val_loader,
-        )
+        train_res = {k: v for k, v in train_res.items() if k!="predictions" and k!="targets"}
+        test_res = {k: v for k, v in test_res.items() if k!="predictions" and k!="targets"}
+
+        train_scores.append(train_res)
+        test_scores.append(test_res)
+
+    # log overall results to wandb
+    train_scores = pd.DataFrame(train_scores)
+    test_scores = pd.DataFrame(test_scores)
+    train_mean = train_scores.mean()
+    test_mean = test_scores.mean()
+    train_std = train_scores.std()
+    test_std = test_scores.std()
+
+    # Log bar plots for train and test metrics
+    train_summary_df = pd.DataFrame(
+        {"Metric": train_mean.index, "Mean": train_mean.values, "Std": train_std.values}
+    )
+
+    test_summary_df = pd.DataFrame(
+        {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
+    )
+
+    wandb.log(
+        {"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)}
+    )
+    wandb.log(
+        {"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)}
+    )
+
+    # Save all outer CV splits and best trial parameters
+    results_df = pd.DataFrame(split_config)
+    results_path = (
+        get_run_dir_for_experiment({"wandb_params": {"name": wandb_name}})
+        / "outer_cv_splits_and_best_trial_params.csv"
+    )
+    results_df.to_csv(results_path, index=False)
+    wandb.log({"outer_cv_splits_and_best_trial_params": wandb.Table(dataframe=results_df)})
+    logger.success(
+        f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
+    )
+
+    logger.success("Done!")
+    wandb.finish()
 
 
 if __name__ == "__main__":

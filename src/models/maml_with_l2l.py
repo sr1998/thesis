@@ -1,15 +1,16 @@
 from loguru import logger
-from torch import Tensor, nn, no_grad, tensor, zeros_like
 from torch import cat as torch_cat
 from torch import device as torch_device
-from torch.autograd import grad
+from torch import nn, no_grad
 from torch.nn import BCEWithLogitsLoss
-from torch.optim import SGD, Adam, Optimizer
+from torch.optim import SGD
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 import src.models.maml_helpers_l2l as maml_helpers_l2l
 import wandb
-from src.helper_function import metalearning_binary_target_changer, set_learning_rate
+from src.data.helper_functions import metalearning_binary_target_changer
+from src.models.helper_functions import batch_tasks, set_learning_rate
 from src.scoring.metalearning_scoring_fn import compute_metrics
 
 
@@ -22,9 +23,10 @@ class MAML:
         eval_n_gradient_steps: int,
         device: torch_device,
         inner_lr_range: tuple[float, float],
-        inner_rl_reduction_factor: int = 1.5,
+        inner_lr_reduction_factor: int = 1.5,
         outer_lr_range: tuple[float, float],
-        k_shot: int,
+        train_k_shot: int,
+        eval_k_shot: int = None,
         loss_fn: nn.Module = None,
     ):
         model.to(device)
@@ -38,198 +40,55 @@ class MAML:
         self.inner_lr = max(inner_lr_range)  # alpha from paper
         self.outer_lr_range = outer_lr_range
         self.outer_lr = max(outer_lr_range)  # beta from paper
-        self.k_shot = k_shot
-        self.inner_lr_reduction_factor = inner_rl_reduction_factor
+        self.train_k_shot = train_k_shot
+        self.eval_k_shot = eval_k_shot or train_k_shot
+        self.inner_lr_reduction_factor = inner_lr_reduction_factor
 
         self.maml = maml_helpers_l2l.MAML(self.model, lr=self.inner_lr)
+        self.outer_optimizer = None
+        self.current_epoch = 0
 
-    # def inner_loop(self, X_support: Tensor, y_support: Tensor, train: bool = True):
-    #     inner_optimizer = SGD(self.model.parameters(), lr=self.inner_lr)
+    def initialize_optimizer(self):
+        """Initialize or reset the optimizer with current learning rate"""
+        self.outer_optimizer = SGD(self.maml.parameters(), self.outer_lr)
+        return self.outer_optimizer
 
-    #     # Create a functional (fast) model that supports differentiable updates.
-    #     # with higher.innerloop_ctx(
-    #     #     self.model,
-    #     #     inner_optimizer,
-    #     #     copy_initial_weights=True,
-    #     #     track_higher_grads=train,
-    #     # ) as (fmodel, diffopt):
-    #     #     steps = self.train_n_gradient_steps if train else self.eval_n_gradient_steps
-    #     #     for _ in range(steps):
-    #     #         # Forward pass on support data
-    #     #         support_preds = fmodel(X_support).squeeze()
-    #     #         support_loss = self.loss_fn(support_preds, y_support)
-    #     #         # Perform an inner-loop update (this update is differentiable)
-    #     #         diffopt.step(support_loss)
-    #     #     return fmodel
+    def update_learning_rates(self, epoch, total_epochs):
+        """Update learning rates based on current epoch"""
+        self.outer_lr = min(self.outer_lr_range) * (epoch / total_epochs) + max(
+            self.outer_lr_range
+        ) * (1 - epoch / total_epochs)
+        if self.outer_optimizer:
+            set_learning_rate(self.outer_optimizer, self.outer_lr)
+        return self.outer_lr
 
-    #     # Deepcopy the model
-    #     task_model = type(self.model)(X_support.shape[1]).to(self.device)
-    #     task_model.load_state_dict(self.model.state_dict())
-    #     task_model.train()
-    #     for i in range(
-    #         self.train_n_gradient_steps if train else self.eval_n_gradient_steps
-    #     ):
-    #         # Support loss
-    #         support_loss = self.loss_fn(task_model(X_support).squeeze(), y_support)
+    def train_step(self, batch, n_parallel_tasks=1):
+        """Perform a single training step on a batch of tasks"""
+        if self.outer_optimizer is None:
+            self.initialize_optimizer()
 
-    #         # Get gradients w.r.t. task_model
-    #         grads = grad(support_loss, task_model.parameters(), create_graph=train)
-    #         # print("inner lr:", self.inner_lr)
-    #         # print("grads", grads, sep="\n")
-
-    #         # with no_grad():   # TODO does this make a difference?
-    #         for param, g in zip(task_model.parameters(), grads):
-    #             param -= self.inner_lr * g
-
-    #     return task_model
-
-    def fit(
-        self,
-        *,
-        train_dataloader: DataLoader,
-        n_epochs: int,
-        n_parallel_tasks: int,
-        evaluate_train: bool = False,
-        val_dataloader: DataLoader = None,
-    ):
-        # we want each epoch to go through the whole dataset
-        n_iters = n_epochs * (len(train_dataloader) // n_parallel_tasks + 1)
-
-        task_iterator = iter(train_dataloader)
-
-        epoch_count = 0
-        if evaluate_train:
-            self.evaluate(val_dataloader, epoch_count)
-
-        self.model.train()
-
-        outer_optimizer = SGD(self.maml.parameters(), self.outer_lr)
-
-        for i in range(n_iters):
-            meta_train_error = 0.0
-            predictions_all = []
-            targets_all = []
-
-            outer_optimizer.zero_grad()
-            # Sum of losses for meta-learning updates
-            # meta_loss = tensor([0.0], requires_grad=True).to(self.device)
-
-            # Inner loop updates due to each task
-            for task in range(n_parallel_tasks):
-                # Get a task
-                try:
-                    X, y = next(task_iterator)
-                except StopIteration:
-                    epoch_count += 1
-                    self.outer_lr = min(self.outer_lr_range) * (
-                        epoch_count / n_epochs
-                    ) + max(self.outer_lr_range) * (1 - epoch_count / n_epochs)
-                    set_learning_rate(outer_optimizer, self.outer_lr)
-                    logger.info(
-                        f"Epoch {epoch_count} complete at iteration {i+1}/{n_iters} with {n_parallel_tasks} parallel tasks and {len(train_dataloader)} total tasks. Reinitializing DataLoader for next epoch."
-                    )
-                    if evaluate_train:
-                        self.evaluate(val_dataloader, epoch_count)
-
-                    if epoch_count == n_epochs:
-                        logger.info(
-                            f"Ending training as {n_epochs} epochs have been completed."
-                        )
-                        return
-                    task_iterator = iter(train_dataloader)
-                    X, y = next(task_iterator)
-                # Prep task data
-                y = metalearning_binary_target_changer(y)
-                X_support = X[: self.k_shot * 2, :].to(self.device)
-                y_support = y[: self.k_shot * 2].to(self.device)
-                X_query = X[self.k_shot * 2 :, :].to(self.device)
-                y_query = y[self.k_shot * 2 :].to(self.device)
-
-                learner = self.maml.clone()
-                learner = maml_helpers_l2l.fast_adapt(
-                    X_support,
-                    y_support,
-                    learner,
-                    self.loss_fn,
-                    self.train_n_gradient_steps,
-                    initial_lr=max(self.inner_lr_range),
-                    inner_rl_reduction_factor=self.inner_lr_reduction_factor,
-                )
-                predictions = learner(X_query).squeeze()
-                evaluation_error = self.loss_fn(predictions, y_query)
-                evaluation_error.backward()
-                meta_train_error += evaluation_error.item()
-
-                predictions_all.append(predictions.detach().cpu())
-                targets_all.append(y_query.detach().cpu())
-
-            # Calculate and log metric after for the current original model
-            meta_train_error /= n_parallel_tasks
-            big_preds = torch_cat(predictions_all, dim=0)
-            big_targets = torch_cat(targets_all, dim=0)
-            final_scores = compute_metrics(big_preds, big_targets)
-            wandb.log(
-                {
-                    "train/loss": meta_train_error,
-                    "train/accuracy": final_scores["accuracy"],
-                    "train/f1": final_scores["f1"],
-                    "train/precision": final_scores["precision"],
-                    "train/recall": final_scores["recall"],
-                    "train/roc_auc": final_scores["roc_auc"],
-                    "epoch": epoch_count,
-                    "iteration": i,
-                },
-            )
-
-            # logger.info(f"Evaluation after epoch {epoch_count}: Loss = {meta_train_error:.2f}")
-            # logger.info(f"Accuracy = {scores['accuracy']:.2f}, F1 = {scores['f1']:.2f}, Precision = {scores['precision']:.2f}, Recall = {scores['recall']:.2f}, ROC-AUC = {scores['roc_auc']:.2f}")
-
-            #     task_model = self.inner_loop(X_support, y_support)
-            #     # Query loss with updated fast_model
-            #     query_preds = task_model(X_query).squeeze()
-            #     query_loss = self.loss_fn(query_preds, y_query)
-
-            #     meta_loss += query_loss
-
-            # Average the accumulated gradients and optimize
-            for p in self.maml.parameters():
-                p.grad.data.mul_(1.0 / n_parallel_tasks)
-            outer_optimizer.step()
-
-            # # Update of the original model (outer loop)
-            # print(self.model.state_dict())
-            # meta_loss /= n_parallel_tasks
-            # meta_loss.backward()
-            # self.outer_optimizer.step()
-            # self.outer_optimizer.zero_grad()
-            # print(self.model.state_dict())
-
-    def evaluate(self, dataloader: DataLoader, epoch: int):
-        meta_test_error = 0.0
+        meta_train_error = 0.0
         predictions_all = []
         targets_all = []
-        for X, y in dataloader:
-            # get support/query data
-            X, y = X.to(self.device), y.to(self.device)
-            X_support = X[: self.k_shot * 2, :]
-            y_support = y[: self.k_shot * 2]
-            X_query = X[self.k_shot * 2 :, :]
-            y_query = y[self.k_shot * 2 :]
 
-            # Get task model with inner loop updates
-            #     task_model = self.inner_loop(X_support, y_support, train=True)
-            #     task_model.eval()
-            #     with no_grad():
-            #         # Get predictions with this model
-            #         query_preds = task_model(X_query).squeeze()
-            #         # Calculate loss
-            #         query_loss = self.loss_fn(query_preds, y_query)
-            #         total_loss += query_loss
-            #         # Calculate accuracy vars
-            #         y_preds = (query_preds > 0).float().squeeze()
-            #         total_correct += (y_preds == y_query).sum().item()
-            #         total_samples += y_query.shape[0]
+        self.outer_optimizer.zero_grad()
 
+        # Process each task in the batch
+        for task_idx in range(n_parallel_tasks):
+            try:
+                X, y = batch[task_idx]
+            except IndexError:
+                # Handle case where batch doesn't have enough tasks
+                continue
+
+            # Prep task data
+            y = metalearning_binary_target_changer(y)
+            X_support = X[: self.train_k_shot * 2, :].to(self.device)
+            y_support = y[: self.train_k_shot * 2].to(self.device)
+            X_query = X[self.train_k_shot * 2 :, :].to(self.device)
+            y_query = y[self.train_k_shot * 2 :].to(self.device)
+
+            # Clone model and adapt to task
             learner = self.maml.clone()
             learner = maml_helpers_l2l.fast_adapt(
                 X_support,
@@ -240,6 +99,68 @@ class MAML:
                 initial_lr=max(self.inner_lr_range),
                 inner_rl_reduction_factor=self.inner_lr_reduction_factor,
             )
+
+            # Make predictions and compute loss
+            predictions = learner(X_query).squeeze()
+            evaluation_error = self.loss_fn(predictions, y_query)
+            evaluation_error.backward()
+            meta_train_error += evaluation_error.item()
+
+            predictions_all.append(predictions.detach().cpu())
+            targets_all.append(y_query.detach().cpu())
+
+        # Update model if there were tasks in the batch
+        if len(predictions_all) > 0:
+            # Scale gradients by number of tasks
+            for p in self.maml.parameters():
+                if p.grad is not None:
+                    p.grad.data.mul_(1.0 / len(predictions_all))
+
+            self.outer_optimizer.step()
+
+            # Compute metrics
+            meta_train_error /= len(predictions_all)
+            big_preds = torch_cat(predictions_all, dim=0)
+            big_targets = torch_cat(targets_all, dim=0)
+            metrics = compute_metrics(big_preds, big_targets)
+
+            return {
+                "loss": meta_train_error,
+                **metrics,
+                "predictions": big_preds,
+                "targets": big_targets,
+            }
+
+        return None
+
+    def evaluate_step(self, batch):
+        """Evaluate the model on a batch of tasks"""
+        meta_test_error = 0.0
+        predictions_all = []
+        targets_all = []
+
+        # Process each task in the batch
+        for X, y in batch:
+            # Prep data
+            X, y = X.to(self.device), y.to(self.device)
+            X_support = X[: self.eval_k_shot * 2, :]
+            y_support = y[: self.eval_k_shot * 2]
+            X_query = X[self.eval_k_shot * 2 :, :]
+            y_query = y[self.eval_k_shot * 2 :]
+
+            # Clone and adapt model
+            learner = self.maml.clone()
+            learner = maml_helpers_l2l.fast_adapt(
+                X_support,
+                y_support,
+                learner,
+                self.loss_fn,
+                self.eval_n_gradient_steps,  # Note: using eval steps here
+                initial_lr=max(self.inner_lr_range),
+                inner_rl_reduction_factor=self.inner_lr_reduction_factor,
+            )
+
+            # Evaluate
             learner.eval()
             with no_grad():
                 predictions = learner(X_query).squeeze()
@@ -249,105 +170,163 @@ class MAML:
                 predictions_all.append(predictions.detach().cpu())
                 targets_all.append(y_query.detach().cpu())
 
-        # # Compute final metrics
-        meta_test_error /= len(dataloader)
-        big_preds = torch_cat(predictions_all, dim=0)
-        big_targets = torch_cat(targets_all, dim=0)
-        final_scores = compute_metrics(big_preds, big_targets)
-        wandb.log(
-            {
-                "val/loss": meta_test_error,
-                "val/accuracy": final_scores["accuracy"],
-                "val/f1": final_scores["f1"],
-                "val/precision": final_scores["precision"],
-                "val/recall": final_scores["recall"],
-                "val/roc_auc": final_scores["roc_auc"],
+        # Compute metrics
+        if len(predictions_all) > 0:
+            meta_test_error /= len(batch)
+            big_preds = torch_cat(predictions_all, dim=0)
+            big_targets = torch_cat(targets_all, dim=0)
+            metrics = compute_metrics(big_preds, big_targets)
+
+            return {
+                "loss": meta_test_error,
+                **metrics,
+                "predictions": big_preds,
+                "targets": big_targets,
+            }
+
+        return None
+
+    def fit(
+        self,
+        *,
+        train_dataloader: DataLoader,
+        n_epochs: int,
+        n_parallel_tasks: int,
+        eval_dataloader: DataLoader = None,
+        val_or_test: str = "val",
+        early_stopping_patience: int = None,
+        early_stopping_metric: str = "loss",
+        log_metrics: bool = True,
+        score_name_prefix: str = None,
+    ):
+        """Full training loop with optional early stopping"""
+        self.model.train()
+        self.initialize_optimizer()
+        score_name_prefix = score_name_prefix + "." if score_name_prefix else ""
+
+        best_metric_value = (
+            float("inf") if "loss" in early_stopping_metric else -float("inf")
+        )
+        patience_counter = 0
+
+        pbar = tqdm(range(n_epochs))
+        for epoch in pbar:
+            if epoch % 10 == 0:
+                pbar.set_description(f"Epoch {epoch+1}/{n_epochs}")
+            # log every 10 epochs, overwriting previous log
+            if log_metrics and epoch % 10 == 0:
+                train_results = self.evaluate(
+                    train_dataloader, f"{score_name_prefix}train", epoch, log_metrics
+                )
+
+            # Validation phase
+            if eval_dataloader:
+                val_result = self.evaluate(
+                    eval_dataloader,
+                    f"{score_name_prefix}{val_or_test}",
+                    epoch,
+                    log_metrics=True if epoch % 10 == 0 else False,
+                )
+
+                # Early stopping check
+                if early_stopping_patience:
+                    current_metric = val_result[early_stopping_metric]
+
+                    improved = (
+                        early_stopping_metric == "loss"
+                        and current_metric < best_metric_value
+                    ) or (
+                        early_stopping_metric != "loss"
+                        and current_metric > best_metric_value
+                    )
+
+                    if improved:
+                        best_metric_value = current_metric
+                        patience_counter = 0
+                    else:
+                        patience_counter += 1
+
+                    if patience_counter >= early_stopping_patience:
+                        logger.info(f"Early stopping triggered after {epoch+1} epochs")
+                        break
+
+            self.current_epoch = epoch
+            self.update_learning_rates(epoch, n_epochs)
+
+            # Training phase
+            # epoch_train_metrics = {}
+            # batch_count = 0
+
+            batches = batch_tasks(
+                train_dataloader, n_parallel_tasks
+            )  # TODO batch size is wrong right?
+            for i, batch in enumerate(
+                tqdm(batches, desc=f"Epoch {epoch+1}/{n_epochs}", leave=False)
+            ):
+                result = self.train_step(batch, n_parallel_tasks)
+                # getting results like this, gets result of different model every iteration. So better to do after a whole epoch
+                # if result:
+                #     batch_count += 1
+                #     for k in result:
+                #         if k != "predictions" and k != "targets":
+                #             epoch_train_metrics[k] = epoch_train_metrics.get(k, 0) + result[k]
+
+            # # Average metrics
+            # for k in epoch_train_metrics:
+            #     epoch_train_metrics[k] /= max(1, batch_count)
+
+            # Log training metrics
+            # if log_metrics:
+            #     train_log = {f"{score_name_prefix}train/{k}": v for k, v in epoch_train_metrics.items()}
+            #     train_log["epoch"] = epoch
+            #     wandb.log(train_log)
+
+        train_results = self.evaluate(
+            train_dataloader, f"{score_name_prefix}train", n_epochs, True
+        )
+
+        # Validation phase
+        val_result = self.evaluate(
+            eval_dataloader, f"{score_name_prefix}{val_or_test}", n_epochs, log_metrics=True
+        )
+
+        return train_results, val_result
+
+    def evaluate(
+        self,
+        dataloader: DataLoader,
+        score_name_prefix: str,
+        epoch: int = None,
+        log_metrics: bool = True,
+        log_step: int = None,
+    ):
+        """Evaluate the model on the entire validation dataset"""
+        self.model.eval()
+
+        all_batches = list(dataloader)
+        results = self.evaluate_step(all_batches)
+
+        if log_metrics and results:
+            val_log = {
+                f"{score_name_prefix}/loss": results["loss"],
+                f"{score_name_prefix}/accuracy": results["accuracy"],
+                f"{score_name_prefix}/f1": results["f1"],
+                f"{score_name_prefix}/precision": results["precision"],
+                f"{score_name_prefix}/recall": results["recall"],
+                f"{score_name_prefix}/roc_auc": results["roc_auc"],
                 "epoch": epoch,
-            },
-        )
+                "log_step": log_step,
+            }
+            wandb.log(val_log)
 
-        logger.info(f"Evaluation after epoch {epoch}: Loss = {meta_test_error:.2f}")
-        logger.info(
-            f"Accuracy = {final_scores['accuracy']:.2f}, F1 = {final_scores['f1']:.2f}, Precision = {final_scores['precision']:.2f}, Recall = {final_scores['recall']:.2f}, ROC-AUC = {final_scores['roc_auc']:.2f}"
-        )
+            logger.info(f"Evaluation after epoch {epoch}: Loss = {results['loss']:.2f}")
+            logger.info(
+                f"Accuracy = {results['accuracy']:.2f}, "
+                + f"F1 = {results['f1']:.2f}, "
+                + f"Precision = {results['precision']:.2f}, "
+                + f"Recall = {results['recall']:.2f}, "
+                + f"ROC-AUC = {results['roc_auc']:.2f}"
+            )
 
-
-# def learn_from_tasks(self, x_spt, y_spt, x_qry, y_qry):
-#     """
-
-#     :param x_spt:   [n_tasks, supportsz, n_features]
-#     :param y_spt:   [n_tasks, supportsz]
-#     :param x_qry:   [n_tasks, querysz, n_features]
-#     :param y_qry:   [n_tasks, querysz]
-#     :return:
-#     """
-#     n_tasks, supportsz, n_features = x_spt.size()
-#     querysz = x_qry.size(1)
-
-#     losses_q = [0 for _ in range(self.update_step + 1)]  # losses_q[i] is the loss on step i
-#     corrects = [0 for _ in range(self.update_step + 1)]
-
-#     for i in range(n_tasks):
-
-#         # 1. run the i-th task and compute loss for k=0
-#         logits = self.model(x_spt[i], vars=None, bn_training=True)
-#         loss = F.cross_entropy(logits, y_spt[i])
-#         grad = torch.autograd.grad(loss, self.net.parameters())
-#         fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, self.net.parameters())))
-
-#         # this is the loss and accuracy before first update
-#         with torch.no_grad():
-#             # [supportsz, nway]
-#             logits_q = self.net(x_qry[i], self.net.parameters(), bn_training=True)
-#             loss_q = F.cross_entropy(logits_q, y_qry[i])
-#             losses_q[0] += loss_q
-
-#             pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
-#             correct = torch.eq(pred_q, y_qry[i]).sum().item()
-#             corrects[0] = corrects[0] + correct
-
-#         # this is the loss and accuracy after the first update
-#         with torch.no_grad():
-#             # [supportsz, nway]
-#             logits_q = self.net(x_qry[i], fast_weights, bn_training=True)
-#             loss_q = F.cross_entropy(logits_q, y_qry[i])
-#             losses_q[1] += loss_q
-#             # [supportsz]
-#             pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
-#             correct = torch.eq(pred_q, y_qry[i]).sum().item()
-#             corrects[1] = corrects[1] + correct
-
-#         for k in range(1, self.update_step):
-#             # 1. run the i-th task and compute loss for k=1~K-1
-#             logits = self.net(x_spt[i], fast_weights, bn_training=True)
-#             loss = F.cross_entropy(logits, y_spt[i])
-#             # 2. compute grad on theta_pi
-#             grad = torch.autograd.grad(loss, fast_weights)
-#             # 3. theta_pi = theta_pi - train_lr * grad
-#             fast_weights = list(map(lambda p: p[1] - self.update_lr * p[0], zip(grad, fast_weights)))
-
-#             logits_q = self.net(x_qry[i], fast_weights, bn_training=True)
-#             # loss_q will be overwritten and just keep the loss_q on last update step.
-#             loss_q = F.cross_entropy(logits_q, y_qry[i])
-#             losses_q[k + 1] += loss_q
-
-#             with torch.no_grad():
-#                 pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
-#                 correct = torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
-#                 corrects[k + 1] = corrects[k + 1] + correct
-
-#     # end of all tasks
-#     # sum over all losses on query set across all tasks
-#     loss_q = losses_q[-1] / n_tasks
-
-#     # optimize theta parameters
-#     self.meta_optim.zero_grad()
-#     loss_q.backward()
-#     # print('meta update')
-#     # for p in self.net.parameters()[:5]:
-#     # 	print(torch.norm(p).item())
-#     self.meta_optim.step()
-
-#     accs = np.array(corrects) / (querysz * n_tasks)
-
-#     return accs
+        self.model.train()
+        return results

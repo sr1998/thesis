@@ -1,12 +1,13 @@
 import random
 from time import sleep
 
+from loguru import logger
 import numpy as np
 import pandas as pd
-from torch import Tensor, FloatTensor, float32, tensor
+from torch import float32, tensor
 from torch.utils.data import Dataset, Sampler
 
-from src.helper_function import circular_slice
+from src.helper_function import circular_slice, df_str_for_loguru
 from src.preprocessing.functions import pandas_label_encoder
 
 
@@ -21,6 +22,7 @@ class MicrobiomeDataset(Dataset):
         target_preprocessor=pandas_label_encoder,
         transform=None,
         target_transform=None,
+        preselected_support_set: list[str] = None,  # only for val and test#TODO test thoroughly
     ):
         """Constructor for the MicrobiomeDataset class.
 
@@ -46,23 +48,34 @@ class MicrobiomeDataset(Dataset):
         ), "Indices of both dataframes must be the same"
 
         self.samples = samples
-        # sort the samples dataframe by index and reset the index
-        # This is done to ensure that the samples are in the same order as the labels
-        self.samples = samples.sort_index().reset_index(drop=True)
+
+        self.preselected_support_set_used = bool(preselected_support_set)
+        if self.preselected_support_set_used:
+            # Order samples in such a way that the support set is always on top and selected with the corresponding k_shot selection.
+            # So first n_classes*k_shot samples should be the support set for each group when grouped by class, as there are this many support set indices.
+            self.samples = self.samples.loc[preselected_support_set + [idx for idx in self.samples.index if idx not in preselected_support_set]]
+
+        # Make samples and labels have the same order
+        label_and_project = label_and_project.loc[self.samples.index] # TODO check for full dataset that is already sorted
+
+        # Reset the index
+        self.samples = self.samples.reset_index(drop=True)
+
         if preprocessor is not None:
             self.samples = preprocessor(self.samples)
         self.samples = tensor(self.samples.to_numpy(), dtype=float32)
 
-        label_and_project = label_and_project.sort_index().reset_index(drop=True)
+        # we can drop here, as we already selected the indices desired
+        label_and_project = label_and_project.reset_index(drop=True)
         if target_preprocessor is not None:
             label_and_project = target_preprocessor(label_and_project)
 
-        by_project_grouped_labels = label_and_project.groupby("project")[["label"]]
+        by_project_grouped_labels = label_and_project.groupby("project", sort=False)[["label"]]
         # Create a dictionary that maps the project to the indices per class for that project
         self.group_to_label_idx_per_class = {
             group: {
-                label: np.array(indices)    # np arrays used to make circular slicing for efficient
-                for label, indices in group_df.groupby("label").groups.items()
+                label: np.array(indices)    # np arrays used to make circular slicing efficient
+                for label, indices in group_df.groupby("label", sort=False).groups.items()
             }
             for group, group_df in by_project_grouped_labels
         }
@@ -138,10 +151,11 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
                 self.shuffle_data()
         else:
             # validation/testing:
-            # Each group is sampled once and gives the query set is all the data except the support set.
+            # Each group is sampled once and the query set is all the data except the support set.
             self.n_batches_per_group = {group: 1 for group in self.groups}
-            self.groups_to_sample = self.groups.copy()
-            if self.shuffle_once or self.shuffle_once:
+            self.groups_to_sample = self.groups.copy()  # compatibility with training, but no effect
+
+            if (self.shuffle_once or self.shuffle_once) and not self.dataset.preselected_support_set_used:
                 self.shuffle_data()
 
     def shuffle_data(self):
@@ -153,7 +167,7 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
                 np.random.shuffle(label_ids)
 
     def __iter__(self):
-        if self.shuffle:    # Only for training
+        if self.shuffle and not self.dataset.preselected_support_set_used:    # No shuffle if preselected support set is used
             self.shuffle_data()
 
         start_indices_per_group = {group: 0 for group in self.groups}

@@ -1,14 +1,11 @@
 import hashlib
 import os
-from random import randint
 from typing import Iterable
 
 import numpy as np
-import optuna
 import pandas as pd
 import plotly.graph_objects as go
 from loguru import logger
-from numpy.random import RandomState
 from requests import Session as requests_session
 from sklearn import clone
 from sklearn.base import BaseEstimator
@@ -17,10 +14,8 @@ from sklearn.feature_selection import SelectPercentile, mutual_info_classif
 from sklearn.metrics import get_scorer
 from sklearn.model_selection import cross_validate
 from sklearn.pipeline import Pipeline
-from torch import Tensor
 
 import wandb
-from joblib import Memory, Parallel, delayed
 from src.global_vars import (
     BASE_RUN_DIR,
     HTTP_ADAPTER_FOR_REQUESTS,
@@ -52,7 +47,7 @@ def tsv_to_csv():
 
 
 def hasher(iterator: Iterable) -> str:
-    """Hashes the elements of an iterator in a deterministic way."""
+    """Hashes the elements of an iterator in a deterministic way, regardless of the order of the elements."""
     iterator_list = list(iterator)
     iterator_list.sort()
     iterator_str = str(iterator_list)
@@ -216,25 +211,6 @@ def circular_slice(arr: Iterable, start: int, end: int) -> Iterable:
     return arr[indices]  # Direct NumPy indexing
 
 
-def metalearning_binary_target_changer(labels: Tensor) -> Tensor:
-    """Change the binary labels randomly.
-
-    Args:
-        labels: The binary labels to change.
-
-    Returns:
-        The changed binary labels.
-    """
-    to_change = randint(0, 1)
-    labels = (labels + to_change) % 2
-    return labels
-
-
-def set_learning_rate(optimizer, lr):
-    for param_group in optimizer.param_groups:
-        param_group["lr"] = lr
-
-
 def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
     """Get the pipeline with the hyperparameters sampled from the search space."""
     trial_config = search_space_sampler(optuna_trial)
@@ -321,7 +297,6 @@ def inner_cv_eval_for_baseline_metalearning(
     pipeline,
     scoring,
 ) -> dict:
-    
     pipeline.fit(train_data, train_labels)
     scores = get_scores(
         pipeline,
@@ -393,7 +368,9 @@ def hyp_param_eval_for_baseline_metalearning(
 
     wandb.log(cross_val_res, step=outer_cv_step)
 
-    return cross_val_res["mean_inner_cv_val/" + best_fit_scorer].mean() # mean_inner_cv_val hard-coded!!!
+    return cross_val_res[
+        "mean_inner_cv_val/" + best_fit_scorer
+    ].mean()  # mean_inner_cv_val hard-coded!!!
 
 
 def column_rename_for_sun_et_al_metadata(metadata: pd.DataFrame) -> pd.DataFrame:
