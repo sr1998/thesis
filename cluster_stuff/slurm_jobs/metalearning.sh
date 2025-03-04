@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --job-name="metalearning_base"
+#SBATCH --job-name="metalearning"
 #SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
 #SBATCH --time=01:30:00            # Request run time (wall-clock). Default is 1 minute
@@ -66,12 +66,12 @@ srun apptainer exec \
     --env-file $HOME/.env \
     --nv \
     $APPTAINER_ROOT/$APPTAINER_NAME \
-    python -m src.main_meta_learning \
+    python -m src.main_metalearning \
     --datasource="sun et al" \
     --config_script="run_configs.maml" \
     --algorithm="${ALGORITHM}" \
     --abundance_file="mpa4_species_profile_preprocessed.csv" \
-    --metadata_file="sample_group_species_preprocessed2.csv" \
+    --metadata_file="sample_group_species_preprocessed.csv" \
     --test_study="$STUDY" \
     --balanced_or_unbalanced "balanced" \
     --n_gradient_steps 5 \

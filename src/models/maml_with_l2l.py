@@ -225,7 +225,7 @@ class MAML:
                     eval_dataloader,
                     f"{score_name_prefix}{val_or_test}",
                     epoch,
-                    log_metrics=True if epoch % 10 == 0 else False,
+                    log_metrics=True if epoch % 10 == 0 and log_metrics else False,
                 )
 
                 # Early stopping check
@@ -282,12 +282,12 @@ class MAML:
             #     wandb.log(train_log)
 
         train_results = self.evaluate(
-            train_dataloader, f"{score_name_prefix}train", n_epochs, True
+            train_dataloader, f"{score_name_prefix}train", n_epochs, log_metrics
         )
 
         # Validation phase
         val_result = self.evaluate(
-            eval_dataloader, f"{score_name_prefix}{val_or_test}", n_epochs, log_metrics=True
+            eval_dataloader, f"{score_name_prefix}{val_or_test}", n_epochs, log_metrics=log_metrics
         )
 
         return train_results, val_result
