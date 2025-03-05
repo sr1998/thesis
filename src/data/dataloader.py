@@ -337,7 +337,7 @@ def get_cross_validation_sun_et_al_data_splits(
     # Load the data splits if they exist
     save_in = BASE_DATA_DIR / "sun_et_al_data" / "selected_data_splits"
     os.makedirs(save_in, exist_ok=True)
-    file_name = f"{test_study}_{k_shot}shot_{balanced_or_unbalanced}.yml"
+    file_name = f"{test_study}_{k_shot}shot_{balanced_or_unbalanced}_nOuter{n_outer_splits}_nInner{n_inner_splits}.yml"
     if os.path.exists(save_in / file_name):
         with open(save_in / file_name, "r") as f:
             cross_val_data_selection = yaml.safe_load(f)
