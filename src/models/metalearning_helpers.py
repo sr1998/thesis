@@ -181,7 +181,7 @@ def hyp_param_val_for_metalearning(
         early_stop_metric = "loss"
 
         logger.info("Fitting model")
-        _, last_val_result = model.fit(
+        train_results, val_results = model.fit(
             train_dataloader=train_loader,
             n_epochs=trial_config["max_epochs"],
             n_parallel_tasks=extra_configs["n_parallel_tasks"],
@@ -191,8 +191,10 @@ def hyp_param_val_for_metalearning(
             log_metrics=False,  # Disable wandb logging during optimization
         )
 
-        for metric, val in last_val_result.items():
-            if metric == "predictions" or metric == "targets":
+        train_results.update(val_results)
+
+        for metric, val in train_results.items():
+            if "predictions" in metric or "targets" in metric:
                 continue
             if metric not in cross_val_results:
                 cross_val_results[metric] = []
@@ -200,15 +202,48 @@ def hyp_param_val_for_metalearning(
         cross_val_results["actual_epochs"] = model.current_epoch + 1
 
     # Get mean and std for all metrics
-    cross_val_results_mean = {k: np.mean(v) for k, v in cross_val_results.items()}
-    cross_val_results_std = {k: np.std(v) for k, v in cross_val_results.items()}
-    wandb_data = {"mean/" + k: v for k, v in cross_val_results_mean.items()}
-    wandb_data.update({"std/" + k: v for k, v in cross_val_results_std.items()})
+    wandb_data = {}
 
-    # log to wandb
-    wandb.log({str(outer_cv_step) + "trial_summary": wandb_data, "trial": trial.number})
+    # Add mean train metrics
+    mean_train_data = {
+        k.replace("train_", f"mean_inner_trains_{outer_cv_step}/"): np.mean(v)
+        for k, v in cross_val_results.items()
+        if "train" in k
+    }
+    mean_train_data["trial"] = trial.number
+    wandb_data.update(mean_train_data)
+
+    # Add mean test metrics
+    mean_test_data = {
+        k.replace("test_", f"mean_inner_vals_{outer_cv_step}/"): np.mean(v)
+        for k, v in cross_val_results.items()
+        if "test" in k
+    }
+    mean_test_data["trial"] = trial.number
+    wandb_data.update(mean_test_data)
+
+    # Add std train metrics
+    std_train_data = {
+        k.replace("train_", f"std_inner_trains_{outer_cv_step}/"): np.std(v)
+        for k, v in cross_val_results.items()
+        if "train" in k
+    }
+    std_train_data["trial"] = trial.number
+    wandb_data.update(std_train_data)
+
+    # Add std test metrics
+    std_test_data = {
+        k.replace("test_", f"std_inner_vals_{outer_cv_step}/"): np.std(v)
+        for k, v in cross_val_results.items()
+        if "test" in k
+    }
+    std_test_data["trial"] = trial.number
+    wandb_data.update(std_test_data)
+
+    wandb.log(wandb_data)
 
     trial.set_user_attr(
         "actual_epochs", ceil(np.mean(cross_val_results["actual_epochs"]).item())
     )
-    return np.mean(wandb_data["mean/" + extra_configs["best_fit_scorer"]])
+    logger.debug(f"trial best scorer scores:\n{cross_val_results["val/" + extra_configs["best_fit_scorer"]]}")
+    return np.mean(cross_val_results["val/" + extra_configs["best_fit_scorer"]])

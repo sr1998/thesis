@@ -83,10 +83,13 @@ class MAML:
 
             # Prep task data
             y = metalearning_binary_target_changer(y)
-            X_support = X[: self.train_k_shot * 2, :].to(self.device)
-            y_support = y[: self.train_k_shot * 2].to(self.device)
-            X_query = X[self.train_k_shot * 2 :, :].to(self.device)
-            y_query = y[self.train_k_shot * 2 :].to(self.device)
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            X_support = X[: self.train_k_shot * 2, :]
+            y_support = y[: self.train_k_shot * 2]
+            X_query = X[self.train_k_shot * 2 :, :]
+            y_query = y[self.train_k_shot * 2 :]
 
             # Clone model and adapt to task
             learner = self.maml.clone()
@@ -209,10 +212,9 @@ class MAML:
         )
         patience_counter = 0
 
-        pbar = tqdm(range(n_epochs))
-        for epoch in pbar:
+        for epoch in range(n_epochs):
             if epoch % 10 == 0:
-                pbar.set_description(f"Epoch {epoch+1}/{n_epochs}")
+                logger.info(f"Epoch {epoch+1}/{n_epochs}")
             # log every 10 epochs, overwriting previous log
             if log_metrics and epoch % 10 == 0:
                 train_results = self.evaluate(
@@ -260,9 +262,7 @@ class MAML:
             batches = batch_tasks(
                 train_dataloader, n_parallel_tasks
             )  # TODO batch size is wrong right?
-            for i, batch in enumerate(
-                tqdm(batches, desc=f"Epoch {epoch+1}/{n_epochs}", leave=False)
-            ):
+            for i, batch in enumerate(batches):
                 result = self.train_step(batch, n_parallel_tasks)
                 # getting results like this, gets result of different model every iteration. So better to do after a whole epoch
                 # if result:
