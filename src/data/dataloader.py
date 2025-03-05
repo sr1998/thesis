@@ -284,6 +284,13 @@ def split_sun_et_al_data(data: pd.DataFrame, metadata: pd.DataFrame, test, val):
     return train_data, test_data, val_data, train_metadata, test_metadata, val_metadata
 
 
+def get_data_hash(abundance_data: pd.DataFrame, metadata: pd.DataFrame) -> str:
+    """Generate a hash based on dataframe content to track data dependencies."""
+    abundance_hash = pd.util.hash_pandas_object(abundance_data).sum()
+    metadata_hash = pd.util.hash_pandas_object(metadata).sum()
+    return f"{abundance_hash}_{metadata_hash}"
+
+
 def get_cross_validation_sun_et_al_data_splits(
     abundance_data: pd.DataFrame,
     metadata: pd.DataFrame,
@@ -337,7 +344,8 @@ def get_cross_validation_sun_et_al_data_splits(
     # Load the data splits if they exist
     save_in = BASE_DATA_DIR / "sun_et_al_data" / "selected_data_splits"
     os.makedirs(save_in, exist_ok=True)
-    file_name = f"{test_study}_{k_shot}shot_{balanced_or_unbalanced}_nOuter{n_outer_splits}_nInner{n_inner_splits}.yml"
+    data_hash = get_data_hash(abundance_data, metadata)
+    file_name = f"{test_study}_{k_shot}shot_{balanced_or_unbalanced}_nOuter{n_outer_splits}_nInner{n_inner_splits}_{data_hash[:8]}.yml"
     if os.path.exists(save_in / file_name):
         with open(save_in / file_name, "r") as f:
             cross_val_data_selection = yaml.safe_load(f)
