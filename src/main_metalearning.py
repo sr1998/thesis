@@ -188,7 +188,7 @@ def main(
 
     train_scores = []
     test_scores = []
-    split_config = []
+    # split_config = []
 
     optuna_study = optuna.create_study(
         direction=tuning_mode,
@@ -214,12 +214,12 @@ def main(
         # save best trial parameters + split for this loop
         best_trial_params = best_trial.params
         best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
-        split_config.append(
-            {
-                "outer_cv_split": i,
-                **best_trial_params,
-            }
-        )
+        # split_config.append(
+        #     {
+        #         "outer_cv_split": i,
+        #         **best_trial_params,
+        #     }
+        # )
 
         # Train the best model
         best_trial_config = search_space_sampler(best_trial)
@@ -280,32 +280,32 @@ def main(
     wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
 
     # Save all outer CV splits and best trial parameters
-    results_df = pd.DataFrame(split_config)
-    results_path = run_dir / "outer_cv_splits_and_best_trial_params.csv"
-    results_df.to_csv(results_path, index=False)
-    wandb.log(
-        {"outer_cv_splits_and_best_trial_params": wandb.Table(dataframe=results_df)}
-    )
-    logger.success(
-        f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
-    )
+    # results_df = pd.DataFrame(split_config)
+    # results_path = run_dir / "outer_cv_splits_and_best_trial_params.csv"
+    # results_df.to_csv(results_path, index=False)
+    # wandb.log(
+    #     {"outer_cv_splits_and_best_trial_params": wandb.Table(dataframe=results_df)}
+    # )
+    # logger.success(
+    #     f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
+    # )
 
     logger.success("Done!")
     wandb.finish()
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    # fire.Fire(main)
 
-    # main(
-    #     datasource="sun et al",
-    #     config_script="run_configs.maml",
-    #     algorithm="MAML",
-    #     abundance_file="mpa4_species_profile_preprocessed.csv",
-    #     metadata_file="sample_group_species_preprocessed.csv",
-    #     test_study="JieZ_2017",
-    #     balanced_or_unbalanced="balanced",
-    #     n_gradient_steps=2,
-    #     n_parallel_tasks=5,
-    #     train_k_shot=10,
-    # )
+    main(
+        datasource="sun et al",
+        config_script="run_configs.maml",
+        algorithm="MAML",
+        abundance_file="mpa4_species_profile_preprocessed.csv",
+        metadata_file="sample_group_species_preprocessed.csv",
+        test_study="JieZ_2017",
+        balanced_or_unbalanced="balanced",
+        n_gradient_steps=2,
+        n_parallel_tasks=5,
+        train_k_shot=10,
+    )

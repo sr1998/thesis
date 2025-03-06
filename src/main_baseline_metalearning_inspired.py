@@ -179,7 +179,7 @@ def main(
 
     train_scores = []
     test_scores = []
-    split_config = []
+    # split_config = []
 
     # split_permutation_importance = pd.DataFrame()
     split_rf_importance_df = pd.DataFrame()
@@ -227,12 +227,12 @@ def main(
         best_trial_params = best_trial.params
         best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
         # Convert to a dictionary format for easier table storage
-        split_entry = {
-            "outer_cv_split": i,
-            **best_trial_params,  # Add all hyperparameters
-        }
+        # split_entry = {
+        #     "outer_cv_split": i,
+        #     **best_trial_params,  # Add all hyperparameters
+        # }
 
-        split_config.append(split_entry)
+        # split_config.append(split_entry)
 
         best_model = get_pipeline(
             datasource, standard_pipeline, search_space_sampler, best_trial
@@ -323,13 +323,13 @@ def main(
     wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
 
     # Save all outer CV splits and best trial parameters
-    results_df = pd.DataFrame(split_config)
-    results_path = run_dir / "outer_cv_results.csv"
-    results_df.to_csv(results_path, index=False)
-    wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
-    logger.success(
-        f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
-    )
+    # results_df = pd.DataFrame(split_config)
+    # results_path = run_dir / "outer_cv_results.csv"
+    # results_df.to_csv(results_path, index=False)
+    # wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
+    # logger.success(
+    #     f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
+    # )
 
     # Save permutation importance
     # perm_importance_path = (

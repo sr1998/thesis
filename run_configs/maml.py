@@ -1,30 +1,42 @@
 def get_setup():
     def search_space_sampler(optuna_trial):
         # Meta-learning specific hyperparameters
-        outer_lr_min = optuna_trial.suggest_float("outer_lr_min", 1e-2, 1, log=True)
-        outer_lr_max = optuna_trial.suggest_float("outer_lr_max", outer_lr_min, 2, log=True)
+        outer_lr_min = optuna_trial.suggest_float("outer_lr_min", 1e-3, 2)
+        outer_lr_max = optuna_trial.suggest_float("outer_lr_max", outer_lr_min, 2)
         
         # Inner learning rate (currently the same min/max with reduction factor)
-        inner_lr = optuna_trial.suggest_float("inner_lr", 1e-4, 1, log=True)    # max and min are the same for now as we use a reduction_factor
+        inner_lr = optuna_trial.suggest_float("inner_lr", 1e-6, 1)    # max and min are the same for now as we use a reduction_factor
         inner_lr_reduction_factor = optuna_trial.suggest_float("inner_lr_reduction_factor", 1, 3)   # Division use with reduction factor
         
         # Training parameters
-        max_epochs = optuna_trial.suggest_int("max_epochs", 300, 300)   # Fixed for now as we use early stopping
-        do_normalization_before_scaling = optuna_trial.suggest_categorical(
-            "do_normalization_before_scaling", [True, False]
-        )
-        scale_factor_before_training = optuna_trial.suggest_int("scale_factor_before_training", 1, 1000, log=True)
+        # max_epochs = optuna_trial.suggest_int("max_epochs", 10, 300)   # Fixed for now as we use early stopping
+        # do_normalization_before_scaling = optuna_trial.suggest_categorical(
+        #     "do_normalization_before_scaling", [True, False]
+        # )
+        # scale_factor_before_training = optuna_trial.suggest_int("scale_factor_before_training", 1, 1000)
         
         # Model architecture hyperparameters
         model__num_layers = optuna_trial.suggest_int("model__num_layers", 1, 5)  # Number of hidden layers
         
+        # Option 2: Use a base size parameter for more control
+        base_size = optuna_trial.suggest_int("model__base_size", 16, 1024, step=16)  # Much smaller maximum
+        reduction_factor = optuna_trial.suggest_float("model__reduction_factor", 1.0, 3.0)
+
         # Dynamic creation of layer sizes based on num_layers
         model__layer_sizes = []
         for i in range(model__num_layers):
-            # Layer sizes get progressively smaller
-            max_size = 2048 // (2**i) if i < 4 else 128
-            min_size = max_size // 8
-            layer_size = optuna_trial.suggest_int(f"model__layer_{i}_size", min_size, max_size, step=16)
+            # Calculate size based on layer position
+            if i == 0:
+                # First layer size based on base_size
+                max_size = base_size
+            else:
+                # Subsequent layers get progressively smaller
+                max_size = max(8, int(model__layer_sizes[i-1] / reduction_factor))
+            
+            min_size = max(8, max_size // 4)  # Allow much smaller minimum sizes
+            
+            # Suggest layer size
+            layer_size = optuna_trial.suggest_int(f"model__layer_{i}_size", min_size, max_size, step=8)
             model__layer_sizes.append(layer_size)
         
         # Model configuration parameters
@@ -46,9 +58,9 @@ def get_setup():
             "inner_lr_reduction_factor": inner_lr_reduction_factor,
             
             # Training configuration
-            "max_epochs": max_epochs,
-            "do_normalization_before_scaling": do_normalization_before_scaling,
-            "scale_factor_before_training": scale_factor_before_training,
+            "max_epochs": 300,
+            "do_normalization_before_scaling": False,
+            "scale_factor_before_training": 1,
             
             # Model architecture
             "model__num_layers": model__num_layers,
@@ -63,7 +75,7 @@ def get_setup():
     n_inner_splits = 5
     tuning_mode = "maximize"
     best_fit_scorer = "f1"
-    tuning_num_samples = 100
+    tuning_num_samples = 50
 
     return {
         "n_outer_splits": n_outer_splits,

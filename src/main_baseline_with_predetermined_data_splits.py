@@ -227,7 +227,7 @@ def main(
 
     train_scores = []
     test_scores = []
-    split_config = []
+    # split_config = []
 
     logger.info("Starting with outer cv")
     # split_permutation_importance = pd.DataFrame()
@@ -274,12 +274,12 @@ def main(
         best_trial_params = best_trial.params
         best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
         # Convert to a dictionary format for easier table storage
-        split_entry = {
-            "outer_cv_split": i,
-            **best_trial_params,  # Add all hyperparameters
-        }
+        # split_entry = {
+        #     "outer_cv_split": i,
+        #     **best_trial_params,  # Add all hyperparameters
+        # }
 
-        split_config.append(split_entry)
+        # split_config.append(split_entry)
 
         best_model = get_pipeline(
             datasource, standard_pipeline, search_space_sampler, best_trial
@@ -313,7 +313,7 @@ def main(
             )
 
         wandb.log(
-            {"Outer fold": dict(train_outer_cv_score, **test_outer_cv_score)},
+            {"Outer fold": dict(**train_outer_cv_score, **test_outer_cv_score)},
         )
 
         # tuner_results.append(tuner_cv_result)
@@ -343,13 +343,13 @@ def main(
     wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
 
     # Save all outer CV splits and best trial parameters
-    results_df = pd.DataFrame(split_config)
-    results_path = run_dir / "outer_cv_results.csv"
-    results_df.to_csv(results_path, index=False)
-    wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
-    logger.success(
-        f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
-    )
+    # results_df = pd.DataFrame(split_config)
+    # results_path = run_dir / "outer_cv_results.csv"
+    # results_df.to_csv(results_path, index=False)
+    # wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
+    # logger.success(
+    #     f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
+    # )
 
     # Save permutation importance
     # perm_importance_path = (
@@ -392,7 +392,7 @@ def main(
 
 
 if __name__ == "__main__":
-    # fire.Fire(main)
+    fire.Fire(main)
     # "mgnify",
     # "run_configs.simple_rf_baseline_for_optuna",
     # tax_level="species",
@@ -402,13 +402,13 @@ if __name__ == "__main__":
     # label_col="disease status__biosamples",
     # positive_class_label="Sick",
 
-    main(
-        "sun et al",
-        "run_configs.rf_baseline_for_sun_et_al",
-        abundance_file="mpa4_species_profile_preprocessed.csv",
-        metadata_file="sample_group_species_preprocessed.csv",
-        study="LiJ_2017",
-        train_k_shot=10,
-        balanced_or_unbalanced="balanced",
-        positive_class_label="Disease",
-    )
+    # main(
+    #     "sun et al",
+    #     "run_configs.rf_baseline_for_sun_et_al",
+    #     abundance_file="mpa4_species_profile_preprocessed.csv",
+    #     metadata_file="sample_group_species_preprocessed.csv",
+    #     study="LiJ_2017",
+    #     train_k_shot=10,
+    #     balanced_or_unbalanced="balanced",
+    #     positive_class_label="Disease",
+    # )

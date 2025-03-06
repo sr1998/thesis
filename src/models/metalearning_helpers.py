@@ -176,7 +176,7 @@ def hyp_param_val_for_metalearning(
             extra_configs,
         )
 
-        early_stop_pat = 20
+        early_stop_pat = 10
         early_stop_metric = "loss"
 
         logger.info("Fitting model")
@@ -202,7 +202,9 @@ def hyp_param_val_for_metalearning(
             if metric not in cross_val_results:
                 cross_val_results[metric] = []
             cross_val_results[metric].append(val)
-        cross_val_results["actual_epochs"] = model.current_epoch + 1
+        if "actual_epochs" not in cross_val_results:
+            cross_val_results["actual_epochs"] = []
+        cross_val_results["actual_epochs"].append(model.current_epoch)
 
     # Get mean and std for all metrics
     wandb_data = {}
@@ -239,11 +241,16 @@ def hyp_param_val_for_metalearning(
     }
     wandb_data.update(std_test_data)
     wandb_data["trial"] = trial.number
+    wandb_data["mean_actual_epochs"] = ceil(
+        np.mean(cross_val_results["actual_epochs"]).item()
+    )
 
     wandb.log(wandb_data)
 
     trial.set_user_attr(
         "actual_epochs", ceil(np.mean(cross_val_results["actual_epochs"]).item())
     )
-    logger.debug(f"trial best scorer scores:\n{cross_val_results["val/" + extra_configs["best_fit_scorer"]]}")
+    logger.debug(
+        f"trial best scorer scores:\n{cross_val_results["val/" + extra_configs["best_fit_scorer"]]}"
+    )
     return np.mean(cross_val_results["val/" + extra_configs["best_fit_scorer"]])
