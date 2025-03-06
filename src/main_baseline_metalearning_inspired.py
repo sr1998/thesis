@@ -3,6 +3,7 @@ import sys
 from importlib import import_module
 from pathlib import Path
 
+from joblib import dump as joblib_dump
 from sklearn.inspection import permutation_importance
 
 from src.data.dataloader import (
@@ -84,8 +85,10 @@ def main(
     wandb_params = misc_config["wandb_params"]
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
+    run_dir = get_run_dir_for_experiment(misc_config)
+
     # Set up file logging
-    logger_path = get_run_dir_for_experiment(misc_config) / "log.log"
+    logger_path = run_dir / "log.log"
     logger.add(logger_path, colorize=True, level="DEBUG")
     logger.info("Setting up everything")
 
@@ -235,6 +238,9 @@ def main(
             datasource, standard_pipeline, search_space_sampler, best_trial
         )
         best_model.fit(train_data_extended, train_labels_extended)
+        # save the model
+        model_path = run_dir / f"pipeline_outer_cv_{i}.joblib"
+        joblib_dump(best_model, model_path)
 
         train_outer_cv_score = get_scores(
             best_model,
@@ -318,7 +324,7 @@ def main(
 
     # Save all outer CV splits and best trial parameters
     results_df = pd.DataFrame(split_config)
-    results_path = get_run_dir_for_experiment(misc_config) / "outer_cv_results.csv"
+    results_path = run_dir / "outer_cv_results.csv"
     results_df.to_csv(results_path, index=False)
     wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
     logger.success(
@@ -336,7 +342,7 @@ def main(
 
     # Save RF feature importance
     feature_importance_path = (
-        get_run_dir_for_experiment(misc_config) / "feature_importance.csv"
+        run_dir / "feature_importance.csv"
     )
     split_rf_importance_df.to_csv(feature_importance_path, index=False)
     wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
@@ -361,7 +367,7 @@ def main(
         }
     )
     importance_summary_path = (
-        get_run_dir_for_experiment(misc_config) / "feature_importance_summary.csv"
+        run_dir / "feature_importance_summary.csv"
     )
     rf_importance_summary_df.to_csv(importance_summary_path, index=False)
 

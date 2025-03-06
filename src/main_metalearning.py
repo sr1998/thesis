@@ -109,7 +109,6 @@ def main(
         )
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
     # Set up file logging
     # logger_path = get_run_dir_for_experiment(misc_config) / "log.log"
     # logger.add(logger_path, colorize=True, level="DEBUG")
@@ -164,6 +163,7 @@ def main(
     ]
 
     wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_J{job_id}"
+    run_dir = get_run_dir_for_experiment({"wandb_params": {"name": wandb_name}})
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -209,14 +209,14 @@ def main(
         n_trials=tuning_num_samples,
     )
 
-    for i_outer_split, test_support_set in test_loop_data_selection.items():
+    for i, test_support_set in test_loop_data_selection.items():
         best_trial = optuna_study.best_trial
         # save best trial parameters + split for this loop
         best_trial_params = best_trial.params
         best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
         split_config.append(
             {
-                "outer_cv_split": i_outer_split,
+                "outer_cv_split": i,
                 **best_trial_params,
             }
         )
@@ -245,7 +245,8 @@ def main(
             eval_dataloader=test_loader,
             val_or_test="test",
             log_metrics=True,
-            score_name_prefix=f"outer_fold_{i_outer_split}_fit",
+            score_name_prefix=f"outer_fold_{i}_fit",
+            save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
         )
 
         train_res = {
@@ -280,10 +281,7 @@ def main(
 
     # Save all outer CV splits and best trial parameters
     results_df = pd.DataFrame(split_config)
-    results_path = (
-        get_run_dir_for_experiment({"wandb_params": {"name": wandb_name}})
-        / "outer_cv_splits_and_best_trial_params.csv"
-    )
+    results_path = run_dir / "outer_cv_splits_and_best_trial_params.csv"
     results_df.to_csv(results_path, index=False)
     wandb.log(
         {"outer_cv_splits_and_best_trial_params": wandb.Table(dataframe=results_df)}

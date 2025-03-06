@@ -12,6 +12,7 @@ import wandb
 from src.data.helper_functions import metalearning_binary_target_changer
 from src.models.helper_functions import batch_tasks, set_learning_rate
 from src.scoring.metalearning_scoring_fn import compute_metrics
+from torch import save as torch_save
 
 
 class MAML:
@@ -201,6 +202,7 @@ class MAML:
         early_stopping_metric: str = "loss",
         log_metrics: bool = True,
         score_name_prefix: str = None,
+        save_best_model_path: str = None,
     ):
         """Full training loop with optional early stopping"""
         self.model.train()
@@ -245,6 +247,11 @@ class MAML:
                     if improved:
                         best_metric_value = current_metric
                         patience_counter = 0
+
+                        # Save the best model
+                        if save_best_model_path:
+                            torch_save(self, save_best_model_path)
+                            logger.info(f"Saved new best model with {early_stopping_metric} = {current_metric:.4f}")
                     else:
                         patience_counter += 1
 
