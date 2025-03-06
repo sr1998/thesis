@@ -28,8 +28,9 @@ def get_setup():
         "cache_pipeline_steps": False,  # True giving errors
     }
 
-    n_outer_cv_splits = 5
-    n_inner_cv_splits = 5
+    n_outer_splits = 10
+    n_inner_splits = 5
+    tuning_num_samples = 100
 
     label_preprocessor = LabelEncoder()
 
@@ -92,12 +93,10 @@ def get_setup():
             "model__oob_score": model__oob_score,
         }
 
-    tuning_num_samples = 100
-
     return {
         "misc_config": misc_config,
-        "n_outer_cv_splits": n_outer_cv_splits,
-        "n_inner_cv_splits": n_inner_cv_splits,
+        "n_outer_splits": n_outer_splits,
+        "n_inner_splits": n_inner_splits,
         "standard_pipeline": standard_pipeline,
         "label_preprocessor": label_preprocessor,
         "scoring": score_functions,

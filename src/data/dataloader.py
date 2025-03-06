@@ -6,6 +6,9 @@ import numpy as np
 import pandas as pd
 import yaml
 from loguru import logger
+from sklearn.base import defaultdict
+from sklearn.model_selection import BaseCrossValidator
+from sklearn.utils import check_random_state
 
 import src.data.mgnify_helper as mhf
 from src.global_vars import BASE_DATA_DIR
@@ -301,18 +304,16 @@ def get_cross_validation_sun_et_al_data_splits(
     n_outer_splits: int,
     n_inner_splits: int,
     save_splits: bool = True,
-) -> tuple[dict, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Get the cross validation data splits for the Sun et al. dataset.
+) -> tuple[dict[int, list[str]], dict[int, list[str | list[str]]]]:
+    """Get the "cross validation data splits" for the Sun et al. dataset.
 
     This is reproducible as the random number generator is seeded based on hashing the test_study.
 
-    cross_val_data_selection =
-        {outer_loop_i:
-           tuple(
-             [{test_support_id} * 2*k_shot],
-             {inner_loop_j: (val_study_name, [{val_support_id} * 2*k_shot])}
-             )
-         }
+    Returns:
+        tuple: test_loop_data_selection, val_loop_data_selection, train_data_df, train_metadata_df, test_data_df, test_metadata_df
+        test_loop_data_selection: A dictionary with the outer loop index as key and a list of test support set indices as value.
+        val_loop_data_selection: A dictionary with the inner loop index as key and a list of [val_study, val_support_set_indices] as value.
+
 
     """
     # For now only unbalanced supported # TODO FIXME
@@ -349,9 +350,10 @@ def get_cross_validation_sun_et_al_data_splits(
     if os.path.exists(save_in / file_name):
         with open(save_in / file_name, "r") as f:
             cross_val_data_selection = yaml.safe_load(f)
+            test_loop_data_selection = cross_val_data_selection[0]
+            val_loop_data_selection = cross_val_data_selection[1]
     else:
-        cross_val_data_selection = {}
-
+        test_loop_data_selection = {}
         # Group test metadata so each class is sampled with k_shot exactly for support set
         grouped_test_metadata = test_metadata_df.groupby("Group")
         for i in range(n_outer_splits):
@@ -361,38 +363,34 @@ def get_cross_validation_sun_et_al_data_splits(
                 test_support_set_idx.extend(
                     rng.choice(labels, size=k_shot, replace=False).tolist()
                 )
+            test_loop_data_selection[i] = test_support_set_idx
 
-            inner_loop_data_selection = {}
-            # Choose a val study and sample inner cross-validation support sets for this outer loop
-            for j in range(n_inner_splits):
+        val_loop_data_selection = {}
+        # Choose a val study and sample inner cross-validation support sets for this outer loop
+        for i in range(n_inner_splits):
+            study_selected = rng.choice(remaining_studies, 1).item()
+            val_metadata = train_metadata_df[
+                train_metadata_df["Project_1"] == study_selected
+            ]
+            # if val_study can't provide 2*k_shot samples for the fewest occuring label, get another study
+            while val_metadata["Group"].value_counts().min() < 2 * k_shot:
                 study_selected = rng.choice(remaining_studies, 1).item()
                 val_metadata = train_metadata_df[
                     train_metadata_df["Project_1"] == study_selected
                 ]
-                # if val_study can't provide 2*k_shot samples for the fewest occuring label, get another study
-                while val_metadata["Group"].value_counts().min() < 2 * k_shot:
-                    study_selected = rng.choice(remaining_studies, 1).item()
-                    val_metadata = train_metadata_df[
-                        train_metadata_df["Project_1"] == study_selected
-                    ]
 
-                # Sample inner cross-validation support per class
-                val_support_set_idx = []
-                for group, labels in val_metadata.groupby("Group").groups.items():
-                    val_support_set_idx.extend(
-                        rng.choice(labels, k_shot, replace=False).tolist()
-                    )
-                inner_loop_data_selection[j] = (study_selected, val_support_set_idx)
-
-            # Add data selection to cross_val_data_selection
-            cross_val_data_selection[i] = [
-                test_support_set_idx,
-                inner_loop_data_selection,
-            ]
+            # Sample inner cross-validation support per class
+            val_support_set_idx = []
+            for group, labels in val_metadata.groupby("Group").groups.items():
+                val_support_set_idx.extend(
+                    rng.choice(labels, k_shot, replace=False).tolist()
+                )
+            val_loop_data_selection[i] = [study_selected, val_support_set_idx]
 
         if save_splits:
             if not os.path.exists(save_in / file_name):
                 with open(save_in / file_name, "w") as f:
+                    cross_val_data_selection = [test_loop_data_selection, val_loop_data_selection]
                     yaml.safe_dump(
                         cross_val_data_selection, f, default_flow_style=False
                     )
@@ -402,9 +400,100 @@ def get_cross_validation_sun_et_al_data_splits(
                 )
 
     return (
-        cross_val_data_selection,
+        test_loop_data_selection,
+        val_loop_data_selection,
         train_data_df,
         train_metadata_df,
         test_data_df,
         test_metadata_df,
     )
+
+
+class KShotSplitter(BaseCrossValidator):
+    """
+    Custom splitter that creates train/test splits where the train set
+    contains exactly k_shot examples per class, and the rest goes to testing.
+
+    Parameters:
+    -----------
+    k_shot : int
+        Number of examples per class to include in training set
+    n_splits : int, default=5
+        Number of splitting iterations
+    random_state : int, RandomState instance or None, default=None
+        Controls the randomness of the splits
+    shuffle : bool, default=True
+        Whether to shuffle the data before splitting
+    """
+
+    def __init__(self, k_shot, n_splits=5, random_state=None, shuffle=True):
+        self.k_shot = k_shot
+        self.n_splits = n_splits
+        self.random_state = random_state
+        self.shuffle = shuffle
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        """Returns the number of splitting iterations."""
+        return self.n_splits
+
+    def split(self, X, y, groups=None):
+        """Generate indices to split data into training and test sets.
+
+        Parameters:
+        -----------
+        X : array-like of shape (n_samples, n_features)
+            Training data, where n_samples is the number of samples
+            and n_features is the number of features.
+        y : array-like of shape (n_samples,)
+            The target variable for supervised learning problems.
+        groups : array-like of shape (n_samples,), default=None
+            Group labels for the samples. Not used, present for scikit-learn API compatibility.
+
+        Yields:
+        -------
+        train_indices : ndarray
+            The training set indices for that split.
+        test_indices : ndarray
+            The testing set indices for that split.
+        """
+        X, y = np.asarray(X), np.asarray(y)
+        # Check that we have enough samples per class
+        class_counts = np.bincount(y)
+        if any(count < self.k_shot for count in class_counts if count > 0):
+            raise ValueError(f"Some classes have fewer than {self.k_shot} samples")
+
+        # Get indices for each class
+        class_indices = defaultdict(list)
+        for idx, label in enumerate(y):
+            class_indices[label].append(idx)
+
+        # Convert to numpy arrays for efficient shuffling
+        for label in class_indices:
+            class_indices[label] = np.array(class_indices[label])
+
+        rng = check_random_state(self.random_state)
+
+        for _ in range(self.n_splits):
+            train_indices = []
+
+            # For each class, select k_shot samples for training
+            for label, indices in class_indices.items():
+                if self.shuffle:
+                    indices_shuffled = indices.copy()
+                    rng.shuffle(indices_shuffled)
+                else:
+                    indices_shuffled = indices
+
+                # Take the first k_shot samples for training
+                train_indices.extend(indices_shuffled[: self.k_shot])
+
+            # All other samples go to testing
+            train_indices = np.array(train_indices)
+            test_indices = np.setdiff1d(np.arange(len(y)), train_indices)
+
+            yield train_indices, test_indices
+
+    def _iter_test_indices(self, X, y=None, groups=None):
+        """Generates integer indices corresponding to test sets."""
+        for _, test_index in self.split(X, y, groups):
+            yield test_index

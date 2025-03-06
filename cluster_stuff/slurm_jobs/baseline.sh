@@ -11,7 +11,7 @@
 #SBATCH --gpus-per-task=0
 
 
-STUDIES=('LuW_2018'
+STUDIES=(
     'ChenB_2020' 'ChuY_2021' 'HeQ_2017' 'HuY_2019'
     'HuangR_2020' 'LiJ_2017' 'LiR_2021'
     'LiuP_2021' 'LiuR_2017' 'LuW_2018' 'MaoL_2021'
@@ -20,11 +20,10 @@ STUDIES=('LuW_2018'
     'YangY_2021' 'YeZ_2018' 'YeZ_2020' 'YeohYK_2021' 'YuJ_2017'
     'ZhangX_2015' 'ZhongH_2019' 'ZhouC_2020' 'ZhuF_2020'
     'ZhuJ_2018' 'ZhuQ_2021' 'ZuoK_2019'
+    'JieZ_2017' 'WangQ_2021' 'ZengQ_2021' 'HanL_2021'
+    'QinJ_2012'
 )
-# 31
-
-# STUDIES=('JieZ_2017' 'WangQ_2021' 'ZengQ_2021' 'HanL_2021')
-# STUDIES=('QinJ_2012') 3:30
+# 36
 STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
@@ -64,8 +63,9 @@ srun apptainer exec \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_baseline \
     --what "sun et al" \
-    --config_script "run_configs.rf_baseline_for_sun_et_al" \
-    --tax_level "genus" \
+    --config_script "run_configs.BalancedRF_baseline_for_sun_et_al" \
+    --abundance_file "mpa4_species_profile_preprocessed.csv" \
+    --metadata_file "sample_group_species_preprocessed.csv" \
     --study "$STUDY" \
     --positive_class_label "Disease" \
 

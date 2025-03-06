@@ -138,7 +138,7 @@ def get_metalearning_model_from_trial(
 
 def hyp_param_val_for_metalearning(
     algorithm: str,
-    inner_loop_splits: dict[int, tuple[str, list[str]]],
+    inner_loop_splits: dict[int, list[str | list[str]]],
     orig_train_data: pd.DataFrame,
     orig_train_metadata: pd.DataFrame,
     # test_support_sets: dict[str : list[str]],
@@ -147,7 +147,6 @@ def hyp_param_val_for_metalearning(
     search_space_sampler: callable,
     trial: optuna.Trial,
     extra_configs: dict,
-    outer_cv_step,
 ):
     if val_k_shot is None:
         val_k_shot = train_k_shot
@@ -158,7 +157,7 @@ def hyp_param_val_for_metalearning(
             orig_train_metadata["Project_1"] == val_study_name
         ]
         val_data = orig_train_data.loc[val_metadata.index]
-        train_data = orig_train_data.drop(val_data.index)
+        train_data = orig_train_data.drop(val_metadata.index)
         train_metadata = orig_train_metadata.drop(val_metadata.index)
 
         trial_config = search_space_sampler(trial)
@@ -177,7 +176,7 @@ def hyp_param_val_for_metalearning(
             extra_configs,
         )
 
-        early_stop_pat = 10
+        early_stop_pat = 20
         early_stop_metric = "loss"
 
         logger.info("Fitting model")
@@ -190,6 +189,10 @@ def hyp_param_val_for_metalearning(
             early_stopping_metric=early_stop_metric,
             log_metrics=False,  # Disable wandb logging during optimization
         )
+
+        # update keys to include train and val prefixes
+        train_results = {f"train/{k}": v for k, v in train_results.items()}
+        val_results = {f"val/{k}": v for k, v in val_results.items()}
 
         train_results.update(val_results)
 
@@ -206,39 +209,36 @@ def hyp_param_val_for_metalearning(
 
     # Add mean train metrics
     mean_train_data = {
-        k.replace("train_", f"mean_inner_trains_{outer_cv_step}/"): np.mean(v)
+        k.replace("train/", f"mean_hyp_param_opt_trains/"): np.mean(v)
         for k, v in cross_val_results.items()
-        if "train" in k
+        if "train" in k and "epoch" not in k
     }
-    mean_train_data["trial"] = trial.number
     wandb_data.update(mean_train_data)
 
     # Add mean test metrics
     mean_test_data = {
-        k.replace("test_", f"mean_inner_vals_{outer_cv_step}/"): np.mean(v)
+        k.replace("val/", f"mean_hyp_param_opt_vals/"): np.mean(v)
         for k, v in cross_val_results.items()
-        if "test" in k
+        if "test" in k and "epoch" not in k
     }
-    mean_test_data["trial"] = trial.number
     wandb_data.update(mean_test_data)
 
     # Add std train metrics
     std_train_data = {
-        k.replace("train_", f"std_inner_trains_{outer_cv_step}/"): np.std(v)
+        k.replace("train/", f"std_hyp_param_opt_trains/"): np.std(v)
         for k, v in cross_val_results.items()
-        if "train" in k
+        if "train" in k and "epoch" not in k
     }
-    std_train_data["trial"] = trial.number
     wandb_data.update(std_train_data)
 
     # Add std test metrics
     std_test_data = {
-        k.replace("test_", f"std_inner_vals_{outer_cv_step}/"): np.std(v)
+        k.replace("val/", f"std_hyp_param_opt_vals/"): np.std(v)
         for k, v in cross_val_results.items()
-        if "test" in k
+        if "test" in k and "epoch" not in k
     }
-    std_test_data["trial"] = trial.number
     wandb_data.update(std_test_data)
+    wandb_data["trial"] = trial.number
 
     wandb.log(wandb_data)
 

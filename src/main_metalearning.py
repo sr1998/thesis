@@ -85,13 +85,15 @@ def main(
             index_col=0,
             header=0,
         )
+        sun_et_al_metadata = sun_et_al_metadata.loc[sun_et_al_abundance.index]
 
         if features_to_use:
             sun_et_al_abundance = sun_et_al_abundance.loc[:, features_to_use]
 
         # Get the data splits: outer and inner cross val splits
         (
-            cross_val_data_selection,
+            test_loop_data_selection,
+            val_loop_data_selection,
             train_data,
             train_metadata,
             test_data,
@@ -154,7 +156,6 @@ def main(
         # "v_s" + str(val_study),
         # "m_" + model_name,
         "a_" + algorithm,
-        "j_" + job_id if job_id else "j_local",
         "tax_" + tax_level,
         "t_k" + str(train_k_shot),
         "w_" + datasource,
@@ -189,30 +190,26 @@ def main(
     test_scores = []
     split_config = []
 
-    for i_outer_split, (
-        test_support_set,
-        inner_loop_splits,
-    ) in cross_val_data_selection.items():
-        optuna_study = optuna.create_study(
-            direction=tuning_mode,
-            study_name=f"outer_cv_{i_outer_split}_for_{wandb.run.name}",
-        )
-        optuna_study.optimize(
-            lambda trial: hyp_param_val_for_metalearning(
-                algorithm,
-                inner_loop_splits,
-                train_data,
-                train_metadata,
-                train_k_shot,
-                train_k_shot,
-                search_space_sampler,
-                trial,
-                config,
-                i_outer_split,
-            ),
-            n_trials=tuning_num_samples,
-        )
+    optuna_study = optuna.create_study(
+        direction=tuning_mode,
+        study_name=f"hyper-param_optimization_for_{wandb.run.name}",
+    )
+    optuna_study.optimize(
+        lambda trial: hyp_param_val_for_metalearning(
+            algorithm,
+            val_loop_data_selection,
+            train_data,
+            train_metadata,
+            train_k_shot,
+            train_k_shot,
+            search_space_sampler,
+            trial,
+            config,
+        ),
+        n_trials=tuning_num_samples,
+    )
 
+    for i_outer_split, test_support_set in test_loop_data_selection.items():
         best_trial = optuna_study.best_trial
         # save best trial parameters + split for this loop
         best_trial_params = best_trial.params
@@ -241,7 +238,9 @@ def main(
 
         train_res, test_res = best_model.fit(
             train_dataloader=train_loader,
-            n_epochs=int(best_trial.user_attrs["actual_epochs"] * 1.1),  # 10% more epochs
+            n_epochs=int(
+                best_trial.user_attrs["actual_epochs"] * 1.1
+            ),  # 10% more epochs
             n_parallel_tasks=n_parallel_tasks,
             eval_dataloader=test_loader,
             val_or_test="test",
@@ -249,8 +248,12 @@ def main(
             score_name_prefix=f"outer_fold_{i_outer_split}_fit",
         )
 
-        train_res = {k: v for k, v in train_res.items() if k!="predictions" and k!="targets"}
-        test_res = {k: v for k, v in test_res.items() if k!="predictions" and k!="targets"}
+        train_res = {
+            k: v for k, v in train_res.items() if k != "predictions" and k != "targets"
+        }
+        test_res = {
+            k: v for k, v in test_res.items() if k != "predictions" and k != "targets"
+        }
 
         train_scores.append(train_res)
         test_scores.append(test_res)
@@ -272,12 +275,8 @@ def main(
         {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
     )
 
-    wandb.log(
-        {"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)}
-    )
-    wandb.log(
-        {"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)}
-    )
+    wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
+    wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
 
     # Save all outer CV splits and best trial parameters
     results_df = pd.DataFrame(split_config)
@@ -286,7 +285,9 @@ def main(
         / "outer_cv_splits_and_best_trial_params.csv"
     )
     results_df.to_csv(results_path, index=False)
-    wandb.log({"outer_cv_splits_and_best_trial_params": wandb.Table(dataframe=results_df)})
+    wandb.log(
+        {"outer_cv_splits_and_best_trial_params": wandb.Table(dataframe=results_df)}
+    )
     logger.success(
         f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
     )
@@ -299,23 +300,14 @@ if __name__ == "__main__":
     fire.Fire(main)
 
     # main(
-    #     "src.models.models",
-    #     "model3",
-    #     "mpa4_species_profile_preprocessed.csv",
-    #     "sample_group_species_preprocessed.csv",
-    #     "",
-    #     "JieZ_2017",
-    #     outer_lr_range=(1, 0.01),
-    #     inner_lr_range=(0.5, 0.001),
-    #     inner_rl_reduction_factor=2,
-    #     n_epochs=100,
-    #     train_k_shot=10,
-    #     n_gradient_steps=5,
+    #     datasource="sun et al",
+    #     config_script="run_configs.maml",
+    #     algorithm="MAML",
+    #     abundance_file="mpa4_species_profile_preprocessed.csv",
+    #     metadata_file="sample_group_species_preprocessed.csv",
+    #     test_study="JieZ_2017",
+    #     balanced_or_unbalanced="balanced",
+    #     n_gradient_steps=2,
     #     n_parallel_tasks=5,
-    #     n_components_reduction_factor=0,
-    #     use_cached_pca=False,
-    #     do_normalization_before_scaling=True,
-    #     scale_factor_before_training=100,
-    #     loss_fn="BCELog",
-    #     algorithm="MAML"
+    #     train_k_shot=10,
     # )

@@ -2,7 +2,9 @@ import hashlib
 import os
 from typing import Iterable
 
+from joblib import Memory
 import numpy as np
+import optuna
 import pandas as pd
 import plotly.graph_objects as go
 from loguru import logger
@@ -108,7 +110,7 @@ def get_scores(
     X: np.ndarray,
     y: np.ndarray,
     scoring: dict,
-    score_name_prefix: str,
+    score_name_prefix: str = "",
 ) -> dict:
     """Calculate the scores for the predictions."""
     scores = {}
@@ -137,21 +139,19 @@ def get_scores(
                 if (
                     y_n_unique == 2 and y_pred is not None
                 ):  # [:, 1] needed somewhere, but this seems to work and [:, 0] does not
-                    scores[score_name_prefix + "/" + score_name] = scoring_function(
+                    scores[score_name_prefix + score_name] = scoring_function(
                         y, y_model, **kwargs
                     )
                 else:
-                    scores[score_name_prefix + "/" + score_name] = scoring_function(
+                    scores[score_name_prefix + score_name] = scoring_function(
                         y, y_model, **kwargs
                     )
             else:
                 y_pred = y_pred
-                scores[score_name_prefix + "/" + score_name] = scoring_function(
-                    y, y_pred
-                )
+                scores[score_name_prefix + score_name] = scoring_function(y, y_pred)
         except Exception as e:
             logger.error(f"Error calculating {score_name} for {score_name_prefix}: {e}")
-            scores[score_name_prefix + "/" + score_name] = None
+            scores[score_name_prefix + score_name] = None
 
     return scores
 
@@ -253,10 +253,10 @@ def hyp_param_eval_with_cv(
     best_fit_scorer,
     outer_cv_step,
     search_space_sampler,
-    trial_config,
+    trial: optuna.Trial,
 ):
     """Evaluate the hyperparameters with cross-validation for a given dataset and pipeline with the given search space sampler."""
-    pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial_config)
+    pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial)
 
     logger.info("pipeline:")
     print(pipeline)
@@ -271,106 +271,167 @@ def hyp_param_eval_with_cv(
         n_jobs=None,
     )
 
-    cross_val_res = {
-        **{
-            k.replace("train_", "mean_inner_cv_train/"): np.mean(v)
-            for k, v in cross_val_results.items()
-            if "train" in k
-        },
-        **{
-            k.replace("test_", "mean_inner_cv_val/"): np.mean(v)
-            for k, v in cross_val_results.items()
-            if "test" in k
-        },
-    }
+    # Get mean and std for all metrics
+    wandb_data = {}
 
-    wandb.log(cross_val_res, step=outer_cv_step)
+    # Add mean train metrics
+    mean_train_data = {
+        k.replace("train_", f"mean_inner_trains_{outer_cv_step}/"): np.mean(v)
+        for k, v in cross_val_results.items()
+        if "train" in k
+    }
+    mean_train_data["trial"] = trial.number
+    wandb_data.update(mean_train_data)
+
+    # Add mean test metrics
+    mean_test_data = {
+        k.replace("test_", f"mean_inner_vals_{outer_cv_step}/"): np.mean(v)
+        for k, v in cross_val_results.items()
+        if "test" in k
+    }
+    mean_test_data["trial"] = trial.number
+    wandb_data.update(mean_test_data)
+
+    # Add std train metrics
+    std_train_data = {
+        k.replace("train_", f"std_inner_trains_{outer_cv_step}/"): np.std(v)
+        for k, v in cross_val_results.items()
+        if "train" in k
+    }
+    std_train_data["trial"] = trial.number
+    wandb_data.update(std_train_data)
+
+    # Add std test metrics
+    std_test_data = {
+        k.replace("test_", f"std_inner_vals_{outer_cv_step}/"): np.std(v)
+        for k, v in cross_val_results.items()
+        if "test" in k
+    }
+    std_test_data["trial"] = trial.number
+    wandb_data.update(std_test_data)
+
+    wandb.log(wandb_data)
 
     return cross_val_results["test_" + best_fit_scorer].mean()
 
 
-def inner_cv_eval_for_baseline_metalearning(
+def cv_eval_for_baseline_metalearning(
     train_data,
     train_labels,
-    val_data,
-    val_labels,
+    eval_data,
+    eval_labels,
     pipeline,
     scoring,
+    score_name_prefix_train="",
+    score_name_prefix_eval="",
 ) -> dict:
     pipeline.fit(train_data, train_labels)
-    scores = get_scores(
+    train_scores = get_scores(
         pipeline,
         train_data,
         train_labels,
         scoring,
-        score_name_prefix="mean_inner_cv_train",
+        score_name_prefix=score_name_prefix_train,
     )
-    scores.update(
-        get_scores(
-            pipeline,
-            val_data,
-            val_labels,
-            scoring,
-            score_name_prefix="mean_inner_cv_val",
-        )
+    val_scores = get_scores(
+        pipeline,
+        eval_data,
+        eval_labels,
+        scoring,
+        score_name_prefix=score_name_prefix_eval,
     )
 
-    return scores
+    return train_scores, val_scores
 
 
 def hyp_param_eval_for_baseline_metalearning(
-    what: str,
-    train_data: pd.DataFrame,
-    train_labels: pd.Series,
-    val_study_samples: list[object],
-    n_inner_cv_splits: int,
+    datasource: str,
+    inner_loop_splits: dict[int, list[str | list[str]]],
+    orig_train_data: pd.DataFrame,
+    orig_train_metadata: pd.DataFrame,
+    train_k_shot: int,
+    val_k_shot: int | None,
     standard_pipeline,
     scoring,
     best_fit_scorer,
-    outer_cv_step,
     search_space_sampler,
-    trial_config,
+    trial,
+    labels_preprocessor,
+    positive_class_label,
 ):
     """Evaluate the hyperparameters with cross-validation for a given dataset and pipeline with the given search space sampler.
 
     This function is used for the baseline meta-learning approach where the evaluation data is used as the support set for the validation data.
     """
-    pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial_config)
-
-    logger.info("pipeline:")
-    print(pipeline)
+    pipeline = get_pipeline(datasource, standard_pipeline, search_space_sampler, trial)
 
     # Evaluate the pipeline with the inner cross-validation
-    results = []
-    for i in range(n_inner_cv_splits):
-        val_data = train_data.loc[val_study_samples[i]]
-        val_labels = train_labels.loc[val_study_samples[i]]
-        results.append(
-            inner_cv_eval_for_baseline_metalearning(
-                train_data.drop(index=val_study_samples[i]),
-                train_labels.drop(index=val_study_samples[i]),
-                val_data,
-                val_labels,
-                clone(pipeline),
-                scoring,
-            )
+    train_scores = []
+    val_scores = []
+    for _, (val_study_name, val_support_sets) in inner_loop_splits.items():
+        val_metadata = orig_train_metadata[
+            orig_train_metadata["Project_1"] == val_study_name
+        ]
+        val_data = orig_train_data.loc[val_metadata.index]
+        train_data = orig_train_data.drop(val_metadata.index)
+        train_metadata = orig_train_metadata.drop(val_metadata.index)
+        # Make sure the metadata is in the same order as the data
+        train_metadata = train_metadata.loc[train_data.index]
+
+        (
+            train_data,
+            train_labels,
+            val_data,
+            val_labels,
+        ) = extend_train_with_support_set_from_eval(
+            train_data,
+            train_metadata["Group"],
+            val_data,
+            val_metadata["Group"],
+            val_support_sets,
         )
 
-    # Concatenate results per metric
-    cross_val_res = {}
-    for res in results:
-        for metric, val in res.items():
-            if metric not in cross_val_res:
-                cross_val_res[metric] = []
-            cross_val_res[metric].append(val)
-    # Get mean value for all metrics and in wandb-useful format (train and val separated)
-    cross_val_res = {k: np.mean(v) for k, v in cross_val_res.items()}
+        train_res, val_res = cv_eval_for_baseline_metalearning(
+            train_data, train_labels, val_data, val_labels, clone(pipeline), scoring
+        )
 
-    wandb.log(cross_val_res, step=outer_cv_step)
+        train_scores.append(train_res)
+        val_scores.append(val_res)
 
-    return cross_val_res[
-        "mean_inner_cv_val/" + best_fit_scorer
-    ].mean()  # mean_inner_cv_val hard-coded!!!
+    # log mean and std of the results
+    train_scores = pd.DataFrame(train_scores)
+    val_scores = pd.DataFrame(val_scores)
+
+    train_mean = train_scores.mean()
+    val_mean = val_scores.mean()
+
+    train_std = train_scores.std()
+    val_std = val_scores.std()
+
+    # Create a dictionary for wandb logging
+    wandb_data = {}
+
+    # Add mean train metrics
+    for metric, value in train_mean.items():
+        wandb_data[f"mean_hyp_param_opt_trains/{metric}"] = value
+
+    # Add mean validation metrics
+    for metric, value in val_mean.items():
+        wandb_data[f"mean_hyp_param_opt_vals/{metric}"] = value
+
+    # Add std train metrics
+    for metric, value in train_std.items():
+        wandb_data[f"std_hyp_param_opt_trains/{metric}"] = value
+
+    # Add std validation metrics
+    for metric, value in val_std.items():
+        wandb_data[f"std_hyp_param_opt_vals/{metric}"] = value
+
+    wandb_data["trial"] = trial.number
+
+    wandb.log(wandb_data)
+
+    return wandb_data[f"mean_hyp_param_opt_vals/{best_fit_scorer}"]
 
 
 def column_rename_for_sun_et_al_metadata(metadata: pd.DataFrame) -> pd.DataFrame:
@@ -435,8 +496,10 @@ def extend_train_with_support_set_from_eval(
     """Extend the training data with the support data from the evaluation data."""
     train_data = pd.concat([train_data, eval_data.loc[eval_support_indices]])
     train_labels = pd.concat([train_labels, eval_labels.loc[eval_support_indices]])
+    train_labels = train_labels.loc[train_data.index]
 
     eval_data = eval_data.drop(eval_support_indices)
     eval_labels = eval_labels.drop(eval_support_indices)
+    eval_labels = eval_labels.loc[eval_data.index]
 
     return train_data, train_labels, eval_data, eval_labels

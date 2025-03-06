@@ -3,7 +3,6 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     average_precision_score,
     make_scorer,
-    roc_auc_score,
 )
 from sklearn.model_selection import ShuffleSplit
 
@@ -29,15 +28,19 @@ def get_setup():
     }
 
     # outer_cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
+    n_outer_splits = 10
+    n_inner_splits = 5
+    tuning_num_samples = 100
+
     outer_cv_config = {
         "type": ShuffleSplit,
-        "params": {"n_splits": 5, "test_size": 0.2, "random_state": 42},
+        "params": {"n_splits": n_outer_splits, "test_size": 0.2, "random_state": 42},
     }
 
     inner_cv_config = {
         "type": ShuffleSplit,
         "params": {
-            "n_splits": 5,
+            "n_splits": n_inner_splits,
             "test_size": 0.2,
         },  # don't provide random_state, as we want to change it per outer fold
     }
@@ -114,10 +117,10 @@ def get_setup():
             "model__oob_score": model__oob_score,
         }
 
-    tuning_num_samples = 100
-
     return {
         "misc_config": misc_config,
+        "n_outer_splits": n_outer_splits,
+        "n_inner_splits": n_inner_splits,
         "outer_cv_config": outer_cv_config,
         "inner_cv_config": inner_cv_config,
         "standard_pipeline": standard_pipeline,

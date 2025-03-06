@@ -30,16 +30,20 @@ def get_setup():
         "cache_pipeline_steps": False,  # True giving errors
     }
 
+    n_outer_splits = 10
+    n_inner_splits = 5
+    tuning_num_samples = 100
+
     # outer_cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
     outer_cv_config = {
         "type": ShuffleSplit,
-        "params": {"n_splits": 5, "test_size": 0.2, "random_state": 42},
+        "params": {"n_splits": n_outer_splits, "test_size": 0.2, "random_state": 42},
     }
 
     inner_cv_config = {
         "type": ShuffleSplit,
         "params": {
-            "n_splits": 5,
+            "n_splits": n_inner_splits,
             "test_size": 0.2,
         },  # don't provide random_state, as we want to change it per outer fold
     }
@@ -118,6 +122,8 @@ def get_setup():
 
     return {
         "misc_config": misc_config,
+        "n_outer_splits": n_outer_splits,
+        "n_inner_splits": n_inner_splits,
         "outer_cv_config": outer_cv_config,
         "inner_cv_config": inner_cv_config,
         "standard_pipeline": standard_pipeline,

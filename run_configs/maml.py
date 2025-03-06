@@ -6,14 +6,14 @@ def get_setup():
         
         # Inner learning rate (currently the same min/max with reduction factor)
         inner_lr = optuna_trial.suggest_float("inner_lr", 1e-4, 1, log=True)    # max and min are the same for now as we use a reduction_factor
-        inner_lr_reduction_factor = optuna_trial.suggest_float("inner_lr_reduction_factor", 0.1, 0.9)
+        inner_lr_reduction_factor = optuna_trial.suggest_float("inner_lr_reduction_factor", 1, 3)   # Division use with reduction factor
         
         # Training parameters
-        max_epochs = optuna_trial.suggest_int("max_epochs", 10, 300)
+        max_epochs = optuna_trial.suggest_int("max_epochs", 300, 300)   # Fixed for now as we use early stopping
         do_normalization_before_scaling = optuna_trial.suggest_categorical(
             "do_normalization_before_scaling", [True, False]
         )
-        scale_factor_before_training = optuna_trial.suggest_float("scale_factor_before_training", 0.1, 10.0, log=True)
+        scale_factor_before_training = optuna_trial.suggest_int("scale_factor_before_training", 1, 1000, log=True)
         
         # Model architecture hyperparameters
         model__num_layers = optuna_trial.suggest_int("model__num_layers", 1, 5)  # Number of hidden layers
@@ -30,14 +30,14 @@ def get_setup():
         # Model configuration parameters
         model__dropout_rate = optuna_trial.suggest_float("model__dropout_rate", 0.0, 0.7)
         model__layer_norm = optuna_trial.suggest_categorical("model__layer_norm", [True, False])
-        model__batch_norm = optuna_trial.suggest_categorical("model__batch_norm", [True, False])
-        # Don't use both layer norm and batch norm together
-        if model__layer_norm and model__batch_norm:
-            model__batch_norm = False
+        # model__batch_norm = optuna_trial.suggest_categorical("model__batch_norm", [True, False])
+        # # Don't use both layer norm and batch norm together
+        # if model__layer_norm and model__batch_norm:
+        #     model__batch_norm = False
             
-        model__activation = optuna_trial.suggest_categorical(
-            "model__activation", ["relu", "leaky_relu", "elu", "gelu", "selu"]
-        )
+        # model__activation = optuna_trial.suggest_categorical(
+        #     "model__activation", ["relu", "leaky_relu", "elu", "gelu", "selu"]
+        # )
         
         return {
             # Learning rates
@@ -55,15 +55,15 @@ def get_setup():
             "model__layer_sizes": model__layer_sizes,
             "model__dropout_rate": model__dropout_rate,
             "model__layer_norm": model__layer_norm,
-            "model__batch_norm": model__batch_norm,
-            "model__activation": model__activation,
+            "model__batch_norm": False,
+            "model__activation": None,
         }
     
     n_outer_splits = 10
     n_inner_splits = 5
     tuning_mode = "maximize"
     best_fit_scorer = "f1"
-    tuning_num_samples = 50
+    tuning_num_samples = 100
 
     return {
         "n_outer_splits": n_outer_splits,
