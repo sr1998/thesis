@@ -104,6 +104,7 @@ def get_metalearning_model_from_trial(
             train_k_shot=train_k_shot,
             eval_k_shot=eval_k_shot,
             loss_fn=extra_configs["loss_fn"],
+            weight_decay=trial_config["model__weight_decay"]
         )
 
     # Not converging at all with some tested hyperparams. Wrong implementation maybe. To be figured out when time allows.

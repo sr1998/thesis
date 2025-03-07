@@ -42,6 +42,7 @@ def get_setup():
         # Model configuration parameters
         model__dropout_rate = optuna_trial.suggest_float("model__dropout_rate", 0.0, 0.7)
         model__layer_norm = optuna_trial.suggest_categorical("model__layer_norm", [True, False])
+        model__weight_decay = optuna_trial.suggest_float("model__weight_decay", 0,0, 1.0)
         # model__batch_norm = optuna_trial.suggest_categorical("model__batch_norm", [True, False])
         # # Don't use both layer norm and batch norm together
         # if model__layer_norm and model__batch_norm:
@@ -69,6 +70,7 @@ def get_setup():
             "model__layer_norm": model__layer_norm,
             "model__batch_norm": False,
             "model__activation": None,
+            "model__weight_decay": model__weight_decay
         }
     
     n_outer_splits = 10

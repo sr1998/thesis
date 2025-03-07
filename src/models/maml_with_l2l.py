@@ -29,6 +29,7 @@ class MAML:
         train_k_shot: int,
         eval_k_shot: int = None,
         loss_fn: nn.Module = None,
+        weight_decay: float = 0.0,
     ):
         model.to(device)
 
@@ -44,6 +45,7 @@ class MAML:
         self.train_k_shot = train_k_shot
         self.eval_k_shot = eval_k_shot or train_k_shot
         self.inner_lr_reduction_factor = inner_lr_reduction_factor
+        self.weight_decay = weight_decay
 
         self.maml = maml_helpers_l2l.MAML(self.model, lr=self.inner_lr)
         self.outer_optimizer = None
@@ -51,7 +53,7 @@ class MAML:
 
     def initialize_optimizer(self):
         """Initialize or reset the optimizer with current learning rate"""
-        self.outer_optimizer = SGD(self.maml.parameters(), self.outer_lr)
+        self.outer_optimizer = SGD(self.maml.parameters(), self.outer_lr, weight_decay=self.weight_decay)
         return self.outer_optimizer
 
     def update_learning_rates(self, epoch, total_epochs):
