@@ -246,7 +246,7 @@ def main(
             val_or_test="test",
             log_metrics=True,
             score_name_prefix=f"outer_fold_{i}_fit",
-            save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
+            # save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
         )
 
         train_res = {

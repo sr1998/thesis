@@ -44,6 +44,7 @@ def main(
     metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
     features_to_use: list[str] = None,
+    save_model: bool = False,
 ):
     """Run the baseline pipeline for the baseline meta-learning inspired approach."""
     config_module = import_module(config_script)
@@ -235,8 +236,9 @@ def main(
         )
         best_model.fit(train_data_extended, train_labels_extended)
         # save the model
-        model_path = run_dir / f"pipeline_outer_cv_{i}.joblib"
-        joblib_dump(best_model, model_path)
+        if save_model:
+            model_path = run_dir / f"pipeline_outer_cv_{i}.joblib"
+            joblib_dump(best_model, model_path)
 
         train_outer_cv_score = get_scores(
             best_model,

@@ -47,6 +47,7 @@ def main(
     positive_class_label: str | None = None,
     metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
+    save_model=False,
 ):
     """Run the pipeline for the given study accessions and config script.
 
@@ -286,8 +287,9 @@ def main(
         )
         best_model.fit(train_data, train_labels)
         # save the model
-        model_path = run_dir / f"pipeline_outer_cv_{i}.joblib"
-        joblib_dump(best_model, model_path)
+        if save_model:
+            model_path = run_dir / f"pipeline_outer_cv_{i}.joblib"
+            joblib_dump(best_model, model_path)
 
         train_outer_cv_score = get_scores(
             best_model, train_data, train_labels, scoring, score_name_prefix="train/"
@@ -404,7 +406,7 @@ if __name__ == "__main__":
 
     # main(
     #     "sun et al",
-    #     "run_configs.rf_baseline_for_sun_et_al",
+    #     "run_configs.neural_net",
     #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
     #     study="LiJ_2017",

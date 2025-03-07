@@ -2,10 +2,10 @@ import os
 import sys
 from importlib import import_module
 from pathlib import Path
-from joblib import dump as joblib_dump
 
 from sklearn.inspection import permutation_importance
 
+from joblib import dump as joblib_dump
 from src.data.dataloader import get_mgnify_data, get_sun_et_al_study_data
 
 sys.path.append(".")
@@ -39,6 +39,7 @@ def main(
     positive_class_label: str | None = None,
     metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
+    save_model=False,
 ):
     """Run the pipeline for the given study accessions and config script.
 
@@ -264,8 +265,9 @@ def main(
         )
         best_model.fit(X_train, y_train)
         # save the model
-        model_path = run_dir / f"pipeline_outer_cv_{i}.joblib"
-        joblib_dump(best_model, model_path)
+        if save_model:
+            model_path = run_dir / f"pipeline_outer_cv_{i}.joblib"
+            joblib_dump(best_model, model_path)
 
         train_outer_cv_score = get_scores(
             best_model, X_train, y_train, scoring, score_name_prefix="train/"
