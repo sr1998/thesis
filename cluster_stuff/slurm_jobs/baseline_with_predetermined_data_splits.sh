@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --job-name="sun_et_al_baseline"
+#SBATCH --job-name="sun_et_al_baseline_predetermined_data_splits"
 #SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
 #SBATCH --time=1:30:00            # Request run time (wall-clock). Default is 1 minute
@@ -61,9 +61,9 @@ srun apptainer exec \
     -B $HOME:$HOME \
     --env-file $HOME/.env \
     $APPTAINER_ROOT/$APPTAINER_NAME \
-    python -m src.main_baseline \
+    python -m src.main_baseline_with_predetermined_data_splits \
     --datasource "sun et al" \
-    --config_script "run_configs.rf_baseline_for_sun_et_al" \
+    --config_script "run_configs.rf_baseline_with_predetermined_data_splits" \
     --study "$STUDY" \
     --abundance_file "mpa4_species_profile_preprocessed.csv" \
     --metadata_file "sample_group_species_preprocessed.csv" \
