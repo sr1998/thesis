@@ -194,20 +194,16 @@ def main(
             val_loop_data_selection,
             train_data,
             train_metadata,
-            train_k_shot,
-            train_k_shot,
             standard_pipeline,
             scoring,
             best_fit_scorer,
             search_space_sampler,
             trial,
-            label_preprocessor,
-            positive_class_label,
         ),
         n_trials=tuning_num_samples,
     )
 
-    for i, test_support_set in enumerate(test_loop_data_selection):
+    for i, test_support_set in test_loop_data_selection.items():
         # outer cv data split (done here, as we need to extend the train data with the support set)
         (
             train_data_extended,

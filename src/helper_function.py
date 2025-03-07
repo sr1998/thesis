@@ -349,15 +349,11 @@ def hyp_param_eval_for_baseline_metalearning(
     inner_loop_splits: dict[int, list[str | list[str]]],
     orig_train_data: pd.DataFrame,
     orig_train_metadata: pd.DataFrame,
-    train_k_shot: int,
-    val_k_shot: int | None,
     standard_pipeline,
     scoring,
     best_fit_scorer,
     search_space_sampler,
     trial,
-    labels_preprocessor,
-    positive_class_label,
 ):
     """Evaluate the hyperparameters with cross-validation for a given dataset and pipeline with the given search space sampler.
 
