@@ -1,3 +1,5 @@
+import os
+from loguru import logger
 from sklearn.calibration import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -30,13 +32,14 @@ def get_setup():
 
     n_outer_splits = 10
     n_inner_splits = 5
-    tuning_num_samples = 100
+    tuning_num_samples = 15
 
     label_preprocessor = LabelEncoder()
-
+    n_cpus = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
+    logger.info(f"n_cpus found:{n_cpus}")
     standard_pipeline = create_pipeline(
         [
-            ("model", RandomForestClassifier()),
+            ("model", RandomForestClassifier(n_jobs=n_cpus)),
         ],
         misc_config,
     )
