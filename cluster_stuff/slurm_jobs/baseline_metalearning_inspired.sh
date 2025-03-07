@@ -6,8 +6,8 @@
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
-#SBATCH --cpus-per-task=8         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem=1GB                  # Request ... GB of RAM in total
+#SBATCH --cpus-per-task=10         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
+#SBATCH --mem=2GB                  # Request ... GB of RAM in total
 #SBATCH --gpus-per-task=0
 
 
@@ -31,7 +31,7 @@ STUDIES=(
 TEST_STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
-mkdir "slurm_logs/${SLURM_JOB_NAME}/${STUDY}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${TEST_STUDY}"
 
 
 LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.out"
@@ -67,7 +67,7 @@ srun apptainer exec \
     --env-file $HOME/.env \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_baseline_metalearning_inspired \
-    --what "sun et al" \
+    --datasource "sun et al" \
     --config_script "run_configs.rf_metalearning_baseline_for_sun_et_al" \
     --test_study "$TEST_STUDY" \
     --abundance_file "mpa4_species_profile_preprocessed.csv" \
