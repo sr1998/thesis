@@ -31,8 +31,8 @@ def get_setup():
     }
 
     n_outer_splits = 10
-    n_inner_splits = 5
-    tuning_num_samples = 25
+    n_inner_splits = 3
+    tuning_num_samples = 50
 
     label_preprocessor = LabelEncoder()
     n_cpus = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))

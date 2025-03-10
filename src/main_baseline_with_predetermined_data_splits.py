@@ -3,14 +3,14 @@ import sys
 from importlib import import_module
 from pathlib import Path
 
+from optuna.visualization import plot_param_importances
+
 from joblib import dump as joblib_dump
-from matplotlib import pyplot as plt
 from src.data.dataloader import (
     KShotSplitter,
     get_cross_validation_sun_et_al_data_splits,
 )
 from src.global_vars import BASE_DATA_DIR
-from optuna.visualization import plot_param_importances
 
 sys.path.append(".")
 import fire
@@ -21,6 +21,7 @@ from loguru import logger
 import wandb
 from src.helper_function import (
     encode_labels,
+    get_cluster_save_directory,
     get_pipeline,
     get_run_dir_for_experiment,
     get_scores,
@@ -31,8 +32,7 @@ from src.helper_function import (
 
 def main(
     datasource: str,
-    config_script: str,
-    *,
+    model_name: str,  # possible values: RandomForestClassifier, XGBoost, NeuralNet, BalancedRandomForestClassifier
     study: str | list[str],
     abundance_file: str | Path,  # for sun et al. data for now
     metadata_file: str | Path,  # for sun et al. data for now
@@ -44,11 +44,11 @@ def main(
     positive_class_label: str | None = None,
     metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
-    save_model=False,
+    save_model=True,
 ):
-    """Run the pipeline for the given study accessions and config script.
+    """Run the pipeline for the given study accessions and model name.
 
-    Args:
+    Args: # TODO
         datasource: This decided what dataset is ran.
         config_script: The path to the config script
         study:
@@ -82,8 +82,12 @@ def main(
         None
 
     """
+    config_script = "run_configs.predetermined_data_splits"
     config_module = import_module(config_script)
-    setup = config_module.get_setup()
+    setup = config_module.get_setup(
+        model_name,
+        with_oversampling=True if balanced_or_unbalanced == "balanced" else False,
+    )
     (
         misc_config,
         n_outer_splits,
@@ -99,22 +103,25 @@ def main(
         tuning_num_samples,
     ) = setup.values()
 
+    job_id = os.getenv("SLURM_JOB_ID")
     setup["datasource"] = datasource
+    setup["model_name"] = model_name
     setup["study"] = study
     setup["abundance_file"] = abundance_file
     setup["metadata_file"] = metadata_file
     tax_level = abundance_file.split("_")[1]
     setup["tax_level"] = tax_level
-    setup["model"] = standard_pipeline.named_steps["model"].__class__.__name__
+    setup["train_k_shot"] = train_k_shot
+    setup["balanced_or_unbalanced"] = balanced_or_unbalanced
     if datasource == "mgnify":
         setup["summary_type"] = summary_type
         setup["pipeline_version"] = pipeline_version
         setup["label_col"] = label_col
     setup["positive_class_label"] = positive_class_label
     setup["metdata_cols_to_use_as_features"] = metadata_cols_to_use_as_features
+    setup["job_id"] = job_id
 
-    job_id = os.getenv("SLURM_JOB_ID")
-    wandb_name = f"w_{datasource}__d_{study}__j_{job_id}__t_{tax_level}"
+    wandb_name = f"w_{datasource}__d_{study}__m_{model_name}__{balanced_or_unbalanced}"
     wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
 
     # get misc config parameters
@@ -126,6 +133,7 @@ def main(
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
     run_dir = get_run_dir_for_experiment(misc_config)
+    model_save_dir = get_cluster_save_directory(misc_config) or run_dir
 
     # Set up file logging
     logger_path = run_dir / "log.log"
@@ -133,9 +141,12 @@ def main(
     logger.info("Setting up everything")
 
     wandb_base_tags = [
-        "d_" + str(study),
-        "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
-        "t_" + tax_level,
+        str(datasource),
+        model_name,
+        balanced_or_unbalanced,
+        tax_level,
+        str(study),
+        str(train_k_shot) + "shot",
     ]
 
     if datasource == "mgnify":
@@ -269,14 +280,22 @@ def main(
             callbacks=[optuna_wandb_callback],
         )
         try:
-            fig= plot_param_importances(optuna_study)
+            fig = plot_param_importances(optuna_study)
             wandb.log({f"param_imp_fig_outer_loop_{i}": wandb.Plotly(fig)})
             param_importance = optuna.importance.get_param_importances(optuna_study)
-            param_importance_df = pd.DataFrame({
-                'Parameter': list(param_importance.keys()),
-                'Importance': list(param_importance.values())
-            })
-            wandb.log({f"param_imp_outer_loop_{i}": wandb.Table(dataframe=param_importance_df)})
+            param_importance_df = pd.DataFrame(
+                {
+                    "Parameter": list(param_importance.keys()),
+                    "Importance": list(param_importance.values()),
+                }
+            )
+            wandb.log(
+                {
+                    f"param_imp_outer_loop_{i}": wandb.Table(
+                        dataframe=param_importance_df
+                    )
+                }
+            )
         except Exception:
             pass
 
@@ -298,7 +317,7 @@ def main(
         best_model.fit(train_data, train_labels)
         # save the model
         if save_model:
-            model_path = run_dir / f"pipeline_outer_cv_{i}.joblib"
+            model_path = model_save_dir / f"pipeline_outer_cv_{i}.joblib"
             joblib_dump(best_model, model_path)
 
         train_outer_cv_score = get_scores(
@@ -406,22 +425,14 @@ def main(
 
 if __name__ == "__main__":
     fire.Fire(main)
-    # "mgnify",
-    # "run_configs.simple_rf_baseline_for_optuna",
-    # tax_level="species",
-    # study=["MGYS00003677"],
-    # summary_type="GO_abundances",
-    # pipeline_version="v4.1",
-    # label_col="disease status__biosamples",
-    # positive_class_label="Sick",
 
     # main(
-    #     "sun et al",
-    #     "run_configs.neural_net",
+    #     datasource="sun et al",
+    #     model_name="NeuralNet",
     #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
-    #     study="WangM_2019",
+    #     study="ZhuQ_2021",
     #     train_k_shot=10,
-    #     balanced_or_unbalanced="balanced",
+    #     balanced_or_unbalanced="unbalanced",
     #     positive_class_label="Disease",
     # )

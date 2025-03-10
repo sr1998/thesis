@@ -1,58 +1,47 @@
-from sklearn.calibration import LabelEncoder
-from sklearn.metrics import average_precision_score, make_scorer
-from sklearn.model_selection import ShuffleSplit
+def xgboost_search_space_sampler(optuna_trial):
+    model__learning_rate = optuna_trial.suggest_float("model__learning_rate", 0.2, 1.0)
+    model__gamma = optuna_trial.suggest_int("model__gamma", 0, 3)
+    model__max_depth = optuna_trial.suggest_int("model__max_depth", 3, 8)
+    model__reg_lambda = optuna_trial.suggest_float("model__reg_lambda", 0.0, 1.0)
+    model__reg_alpha = optuna_trial.suggest_float("model__reg_alpha", 0.0, 1.0)
 
-from src.models.neural_net import NeuralNetWrapper
-
-
-def get_setup():
-    """Configuration for neural network training similar to RF configuration."""
-    misc_config = {
-        "wandb": True,
-        "wandb_params": {
-            "project": "baseline_predetermined_data_splits",
-            "group": "NeuralNet",
-        },
-        "verbose_pipeline": True,
-        "cache_pipeline_steps": False,
+    return {
+        "model__learning_rate": model__learning_rate,
+        "model__gamma": model__gamma,
+        "model__max_depth": model__max_depth,
+        "model__reg_lambda": model__reg_lambda,
+        "model__reg_alpha": model__reg_alpha,
     }
 
-    n_outer_splits = 10
-    n_inner_splits = 5
-    tuning_num_samples = 100
 
-    outer_cv_config = {
-        "type": ShuffleSplit,
-        "params": {"n_splits": n_outer_splits, "test_size": 0.2, "random_state": 42},
+def rf_search_space_sampler(optuna_trial, best_fit_scorer):
+    model__n_estimators = optuna_trial.suggest_int("model__n_estimators", 10, 500)
+    model__max_depth = optuna_trial.suggest_int("model__max_depth", 10, 200)
+    model__criterion = optuna_trial.suggest_categorical(
+        "model__criterion", ["gini", "entropy"]
+    )
+    model__class_weight = optuna_trial.suggest_categorical(
+        "model__class_weight", ["balanced", None]
+    )
+    model__bootstrap = optuna_trial.suggest_categorical(
+        "model__bootstrap", [False, True]
+    )
+    model__oob_score = optuna_trial.suggest_categorical(
+        "model__oob_score", [False, best_fit_scorer]
+    )
+
+    return {
+        # "preprocessor__feature_space_change__percentile": preprocessor__feature_space_change__percentile,
+        # "preprocessor__feature_space_change__n_neighbors": preprocessor__feature_space_change__n_neighbors,
+        "model__n_estimators": model__n_estimators,
+        "model__max_depth": model__max_depth,
+        "model__criterion": model__criterion,
+        "model__class_weight": model__class_weight,
+        "model__bootstrap": model__bootstrap,
+        "model__oob_score": model__oob_score,
     }
 
-    inner_cv_config = {
-        "type": ShuffleSplit,
-        "params": {"n_splits": n_inner_splits, "test_size": 0.2},
-    }
-
-    label_preprocessor = LabelEncoder()
-
-    # Create neural network as a stand-alone pipeline component
-    from src.helper_function import create_pipeline
-
-    standard_pipeline = create_pipeline([("model", NeuralNetWrapper())], misc_config)
-
-    # Define scoring functions - same as RF
-    score_functions = {
-        "accuracy": "accuracy",
-        "f1": "f1",
-        "roc_auc": "roc_auc",
-        "average_precision": make_scorer(average_precision_score),
-        "precision": "precision",
-        "recall": "recall",
-    }
-
-    best_fit_scorer = "f1"
-    tuning_mode = "maximize"
-
-    # Neural network hyperparameter search space
-    def nn_search_space_sampler(optuna_trial):
+def nn_search_space_sampler(optuna_trial):
         model__n_epochs = optuna_trial.suggest_int("model__n_epochs", 1, 200)
         model__batch_size = optuna_trial.suggest_int("model__batch_size", 2, 32, step=2)
         model__lr = optuna_trial.suggest_float("model__lr", 1e-5, 1e-2, log=True)
@@ -105,18 +94,3 @@ def get_setup():
             "model__batch_norm": False,
             "model__activation": "relu",
         }
-
-    return {
-        "misc_config": misc_config,
-        "n_outer_splits": n_outer_splits,
-        "n_inner_splits": n_inner_splits,
-        "outer_cv_config": outer_cv_config,
-        "inner_cv_config": inner_cv_config,
-        "standard_pipeline": standard_pipeline,
-        "label_preprocessor": label_preprocessor,
-        "scoring": score_functions,
-        "best_fit_scorer": best_fit_scorer,
-        "tuning_mode": tuning_mode,
-        "search_space_sampler": nn_search_space_sampler,
-        "tuning_num_samples": tuning_num_samples,
-    }

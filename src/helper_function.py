@@ -1,12 +1,13 @@
 import hashlib
 import os
+from pathlib import Path
 from typing import Iterable
 
-from joblib import Memory
 import numpy as np
 import optuna
 import pandas as pd
 import plotly.graph_objects as go
+from imblearn.pipeline import Pipeline as ImbPipeline
 from loguru import logger
 from requests import Session as requests_session
 from sklearn import clone
@@ -15,9 +16,9 @@ from sklearn.decomposition import PCA
 from sklearn.feature_selection import SelectPercentile, mutual_info_classif
 from sklearn.metrics import get_scorer
 from sklearn.model_selection import cross_validate
-from sklearn.pipeline import Pipeline
 
 import wandb
+from joblib import Memory
 from src.global_vars import (
     BASE_RUN_DIR,
     HTTP_ADAPTER_FOR_REQUESTS,
@@ -80,7 +81,7 @@ def df_str_for_loguru(df: pd.DataFrame) -> str:
     return "\n\t" + df_str.replace("\n", "\n\t")
 
 
-def create_pipeline(steps: list[object], config: dict[str, object]) -> Pipeline:
+def create_pipeline(steps: list[object], config: dict[str, object]) -> ImbPipeline:
     """Create a pipeline from the steps and config."""
     # Create a cache object if caching is enabled with default cache location
     if config.get("cache_pipeline_steps", True):
@@ -90,13 +91,22 @@ def create_pipeline(steps: list[object], config: dict[str, object]) -> Pipeline:
     else:
         cacher = None
 
-    return Pipeline(steps, memory=cacher, verbose=config.get("verbose_pipeline", True))
+    return ImbPipeline(steps, memory=cacher, verbose=config.get("verbose_pipeline", True))
 
 
 def get_run_dir_for_experiment(config: dict[str, object]):
     run_dir = BASE_RUN_DIR / config["wandb_params"]["name"]
     run_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
     return run_dir
+
+
+def get_cluster_save_directory(config: dict[str, object]):
+    save_dir = Path("/tudelft.net/staff-umbrella/abeellabstudents/sramezani/")
+    if not os.path.exists(save_dir):
+        return None
+    save_dir = save_dir / "models" / config["wandb_params"]["name"]
+    save_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+    return save_dir
 
 
 # def get_data_dir_for_experiment(config: dict[str, object]):
@@ -106,7 +116,7 @@ def get_run_dir_for_experiment(config: dict[str, object]):
 
 
 def get_scores(
-    model: Pipeline | BaseEstimator,
+    model: ImbPipeline | BaseEstimator,
     X: np.ndarray,
     y: np.ndarray,
     scoring: dict,
@@ -214,6 +224,7 @@ def circular_slice(arr: Iterable, start: int, end: int) -> Iterable:
 def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
     """Get the pipeline with the hyperparameters sampled from the search space."""
     trial_config = search_space_sampler(optuna_trial)
+    logger.debug(f"trial_config:\n{trial_config}")
 
     if what == "mgnify":
         n_neighbors = trial_config["preprocessor__feature_space_change__n_neighbors"]
@@ -498,18 +509,21 @@ def extend_train_with_support_set_from_eval(
 
     return train_data, train_labels, eval_data, eval_labels
 
+
 def optuna_wandb_callback(study, trial):
     # Log parameters
     trial_params = {f"trial/{k}": v for k, v in trial.params.items()}
-    
+
     # Log metrics
     metrics = {
         "trial": trial.number,
         "trial/number": trial.number,
         "trial/value": trial.value,
         "trial/best_value": study.best_value,
-        "trial/duration_seconds": trial.duration.total_seconds() if hasattr(trial, "duration") else None
+        "trial/duration_seconds": trial.duration.total_seconds()
+        if hasattr(trial, "duration")
+        else None,
     }
-    
+
     # Log everything using W&B's global step counter
     wandb.log({**trial_params, **metrics})

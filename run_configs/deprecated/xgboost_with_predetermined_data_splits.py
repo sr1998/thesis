@@ -1,3 +1,4 @@
+from imblearn.over_sampling import SMOTE
 from sklearn.calibration import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -5,23 +6,17 @@ from sklearn.metrics import (
     make_scorer,
 )
 from sklearn.model_selection import ShuffleSplit
+from xgboost import XGBClassifier
 
+from run_configs.optuna_search_space_samplers import xgboost_search_space_sampler
 from src.helper_function import create_pipeline
-
-# studies interested in:
-# HanL_2021
-# JieZ_2017
-# QinJ_2012
-# WangQ_2021
-# ZengQ_2021
-
 
 def get_setup():
     misc_config = {
         "wandb": True,  # whether to use wandb or not
         "wandb_params": {
             "project": "baseline_predetermined_data_splits",
-            "group": "RF",  # model name can be useful here
+            "group": "XGBoost",  # model name can be useful here
         },
         "verbose_pipeline": True,  # whether to print verbose output from the pipeline
         "cache_pipeline_steps": False,  # True giving errors
@@ -29,8 +24,8 @@ def get_setup():
 
     # outer_cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
     n_outer_splits = 10
-    n_inner_splits = 5
-    tuning_num_samples = 100
+    n_inner_splits = 3
+    tuning_num_samples = 50
 
     outer_cv_config = {
         "type": ShuffleSplit,
@@ -60,7 +55,8 @@ def get_setup():
 
     standard_pipeline = create_pipeline(
         [
-            ("model", RandomForestClassifier()),
+            ("sampler", SMOTE(random_state=42)),
+            ("model", XGBClassifier()),
         ],
         misc_config,
     )
@@ -90,33 +86,6 @@ def get_setup():
     best_fit_scorer = "f1"
     tuning_mode = "maximize"  # "maximize" or "minimize"
 
-    def search_space_sampler(optuna_trial):
-        model__n_estimators = optuna_trial.suggest_int("model__n_estimators", 10, 500)
-        model__max_depth = optuna_trial.suggest_int("model__max_depth", 10, 200)
-        model__criterion = optuna_trial.suggest_categorical(
-            "model__criterion", ["gini", "entropy"]
-        )
-        model__class_weight = optuna_trial.suggest_categorical(
-            "model__class_weight", ["balanced", None]
-        )
-        model__bootstrap = optuna_trial.suggest_categorical(
-            "model__bootstrap", [False, True]
-        )
-        model__oob_score = optuna_trial.suggest_categorical(
-            "model__oob_score", [False, best_fit_scorer]
-        )
-
-        return {
-            # "preprocessor__feature_space_change__percentile": preprocessor__feature_space_change__percentile,
-            # "preprocessor__feature_space_change__n_neighbors": preprocessor__feature_space_change__n_neighbors,
-            "model__n_estimators": model__n_estimators,
-            "model__max_depth": model__max_depth,
-            "model__criterion": model__criterion,
-            "model__class_weight": model__class_weight,
-            "model__bootstrap": model__bootstrap,
-            "model__oob_score": model__oob_score,
-        }
-
     return {
         "misc_config": misc_config,
         "n_outer_splits": n_outer_splits,
@@ -128,6 +97,6 @@ def get_setup():
         "scoring": score_functions,
         "best_fit_scorer": best_fit_scorer,
         "tuning_mode": tuning_mode,
-        "search_space_sampler": search_space_sampler,
+        "search_space_sampler": xgboost_search_space_sampler,
         "tuning_num_samples": tuning_num_samples,
     }

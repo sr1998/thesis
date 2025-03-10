@@ -62,13 +62,13 @@ srun apptainer exec \
     --env-file $HOME/.env \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_baseline_with_predetermined_data_splits \
+    --balanced_or_unbalanced "unbalanced" \
+    --model_name "RandomForestClassifier" \
     --datasource "sun et al" \
-    --config_script "run_configs.rf_baseline_with_predetermined_data_splits" \
     --study "$STUDY" \
     --abundance_file "mpa4_species_profile_preprocessed.csv" \
     --metadata_file "sample_group_species_preprocessed.csv" \
     --train_k_shot 10 \
-    --balanced_or_unbalanced "balanced" \
     --positive_class_label "Disease" \
 
 # srun apptainer exec \
