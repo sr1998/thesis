@@ -3,24 +3,20 @@ import sys
 from importlib import import_module
 from pathlib import Path
 
-from sklearn.inspection import permutation_importance
-
 from joblib import dump as joblib_dump
+from matplotlib import pyplot as plt
 from src.data.dataloader import (
     KShotSplitter,
     get_cross_validation_sun_et_al_data_splits,
-    get_mgnify_data,
-    get_sun_et_al_study_data,
 )
 from src.global_vars import BASE_DATA_DIR
+from optuna.visualization import plot_param_importances
 
 sys.path.append(".")
 import fire
-import numpy as np
 import optuna
 import pandas as pd
 from loguru import logger
-from numpy.random import RandomState
 
 import wandb
 from src.helper_function import (
@@ -29,6 +25,7 @@ from src.helper_function import (
     get_run_dir_for_experiment,
     get_scores,
     hyp_param_eval_with_cv,
+    optuna_wandb_callback,
 )
 
 
@@ -254,6 +251,7 @@ def main(
             direction=tuning_mode,
             study_name=f"outer_cv_{i}_for_{wandb.run.name}",
         )
+
         optuna_study.optimize(
             lambda trial: hyp_param_eval_with_cv(
                 datasource,
@@ -268,7 +266,19 @@ def main(
                 trial,
             ),
             n_trials=tuning_num_samples,
+            callbacks=[optuna_wandb_callback],
         )
+        try:
+            fig= plot_param_importances(optuna_study)
+            wandb.log({f"param_imp_fig_outer_loop_{i}": wandb.Plotly(fig)})
+            param_importance = optuna.importance.get_param_importances(optuna_study)
+            param_importance_df = pd.DataFrame({
+                'Parameter': list(param_importance.keys()),
+                'Importance': list(param_importance.values())
+            })
+            wandb.log({f"param_imp_outer_loop_{i}": wandb.Table(dataframe=param_importance_df)})
+        except Exception:
+            pass
 
         best_trial = optuna_study.best_trial
         # save best trial parameters + split for this loop
@@ -363,31 +373,32 @@ def main(
     # )
 
     # Save RF feature importance
-    feature_importance_path = run_dir / "feature_importance.csv"
-    split_rf_importance_df.to_csv(feature_importance_path, index=False)
-    wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
+    if not split_rf_importance_df.empty:
+        feature_importance_path = run_dir / "feature_importance.csv"
+        split_rf_importance_df.to_csv(feature_importance_path, index=False)
+        wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
 
-    # mean and std of importance of outer runs
-    rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
-    rf_importance_std = split_rf_importance_df.groupby("Feature").std()
+        # mean and std of importance of outer runs
+        rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
+        rf_importance_std = split_rf_importance_df.groupby("Feature").std()
 
-    rf_importance_summary_df = pd.DataFrame(
-        {
-            "Feature": rf_importance_mean.index,
-            "Mean Importance": rf_importance_mean["RF Importance"],
-            "Std Importance": rf_importance_std["RF Importance"],
-        }
-    )
+        rf_importance_summary_df = pd.DataFrame(
+            {
+                "Feature": rf_importance_mean.index,
+                "Mean Importance": rf_importance_mean["RF Importance"],
+                "Std Importance": rf_importance_std["RF Importance"],
+            }
+        )
 
-    wandb.log(
-        {
-            "RF Feature Importance Summary": wandb.Table(
-                dataframe=rf_importance_summary_df
-            )
-        }
-    )
-    importance_summary_path = run_dir / "feature_importance_summary.csv"
-    rf_importance_summary_df.to_csv(importance_summary_path, index=False)
+        wandb.log(
+            {
+                "RF Feature Importance Summary": wandb.Table(
+                    dataframe=rf_importance_summary_df
+                )
+            }
+        )
+        importance_summary_path = run_dir / "feature_importance_summary.csv"
+        rf_importance_summary_df.to_csv(importance_summary_path, index=False)
 
     logger.success("Done!")
     wandb.finish()
@@ -409,7 +420,7 @@ if __name__ == "__main__":
     #     "run_configs.neural_net",
     #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
-    #     study="LiJ_2017",
+    #     study="WangM_2019",
     #     train_k_shot=10,
     #     balanced_or_unbalanced="balanced",
     #     positive_class_label="Disease",

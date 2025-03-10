@@ -186,7 +186,6 @@ def main(
     # log data statistics to wandb
     wandb.log(
         {"Data description": wandb.Table(dataframe=data.describe().T.reset_index())},
-        step=0,
     )
     wandb.log(
         {
@@ -194,7 +193,6 @@ def main(
                 dataframe=labels.value_counts(dropna=False).reset_index()
             )
         },
-        step=0,
     )
 
     encoded_labels = encode_labels(

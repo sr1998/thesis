@@ -348,11 +348,13 @@ def get_cross_validation_sun_et_al_data_splits(
     data_hash = get_data_hash(abundance_data, metadata)
     file_name = f"{test_study}_{k_shot}shot_{balanced_or_unbalanced}_nOuter{n_outer_splits}_nInner{n_inner_splits}_{data_hash[:8]}.yml"
     if os.path.exists(save_in / file_name):
+        logger.info(f"Loading data splits from {save_in / file_name}")
         with open(save_in / file_name, "r") as f:
             cross_val_data_selection = yaml.safe_load(f)
             test_loop_data_selection = cross_val_data_selection[0]
             val_loop_data_selection = cross_val_data_selection[1]
     else:
+        logger.info(f"Generating data splits for {test_study} with {k_shot} shot")
         test_loop_data_selection = {}
         # Group test metadata so each class is sampled with k_shot exactly for support set
         grouped_test_metadata = test_metadata_df.groupby("Group")

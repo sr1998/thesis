@@ -228,13 +228,14 @@ def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
             preprocessor__feature_space_change=preprocessor__feature_space_change
         )
 
-    if not trial_config.get("model__bootstrap", False):
-        trial_config["model__oob_score"] = False
+    if "RandomForest" in standard_pipeline.named_steps["model"].__class__.__name__:
+        if not trial_config.get("model__bootstrap", False):
+            trial_config["model__oob_score"] = False
 
-    if trial_config.get("model__oob_score", False):
-        trial_config["model__oob_score"] = get_scorer(
-            trial_config["model__oob_score"]
-        )._score_func
+        if trial_config.get("model__oob_score", False):
+            trial_config["model__oob_score"] = get_scorer(
+                trial_config["model__oob_score"]
+            )._score_func
 
     standard_pipeline = standard_pipeline.set_params(
         **{k: v for k, v in trial_config.items() if "model" in k}
@@ -280,7 +281,6 @@ def hyp_param_eval_with_cv(
         for k, v in cross_val_results.items()
         if "train" in k
     }
-    mean_train_data["trial"] = trial.number
     wandb_data.update(mean_train_data)
 
     # Add mean test metrics
@@ -289,7 +289,6 @@ def hyp_param_eval_with_cv(
         for k, v in cross_val_results.items()
         if "test" in k
     }
-    mean_test_data["trial"] = trial.number
     wandb_data.update(mean_test_data)
 
     # Add std train metrics
@@ -298,7 +297,6 @@ def hyp_param_eval_with_cv(
         for k, v in cross_val_results.items()
         if "train" in k
     }
-    std_train_data["trial"] = trial.number
     wandb_data.update(std_train_data)
 
     # Add std test metrics
@@ -307,8 +305,8 @@ def hyp_param_eval_with_cv(
         for k, v in cross_val_results.items()
         if "test" in k
     }
-    std_test_data["trial"] = trial.number
     wandb_data.update(std_test_data)
+    wandb_data["trial"] = trial.number
 
     wandb.log(wandb_data)
 
@@ -499,3 +497,19 @@ def extend_train_with_support_set_from_eval(
     eval_labels = eval_labels.loc[eval_data.index]
 
     return train_data, train_labels, eval_data, eval_labels
+
+def optuna_wandb_callback(study, trial):
+    # Log parameters
+    trial_params = {f"trial/{k}": v for k, v in trial.params.items()}
+    
+    # Log metrics
+    metrics = {
+        "trial": trial.number,
+        "trial/number": trial.number,
+        "trial/value": trial.value,
+        "trial/best_value": study.best_value,
+        "trial/duration_seconds": trial.duration.total_seconds() if hasattr(trial, "duration") else None
+    }
+    
+    # Log everything using W&B's global step counter
+    wandb.log({**trial_params, **metrics})
