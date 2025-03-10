@@ -4,12 +4,14 @@ from importlib import import_module
 from pathlib import Path
 
 import optuna
+from optuna.visualization import plot_param_importances
 
 from src.data.dataloader import (
     get_cross_validation_sun_et_al_data_splits,
 )
 from src.helper_function import (
     get_run_dir_for_experiment,
+    optuna_wandb_callback,
 )
 from src.models.metalearning_helpers import (
     get_metalearning_model_from_trial,
@@ -207,7 +209,21 @@ def main(
             config,
         ),
         n_trials=tuning_num_samples,
+        callbacks=[optuna_wandb_callback],
     )
+    try:
+        fig = plot_param_importances(optuna_study)
+        wandb.log({"param_imp_fig": wandb.Plotly(fig)})
+        param_importance = optuna.importance.get_param_importances(optuna_study)
+        param_importance_df = pd.DataFrame(
+            {
+                "Parameter": list(param_importance.keys()),
+                "Importance": list(param_importance.values()),
+            }
+        )
+        wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
+    except Exception:
+        pass
 
     for i, test_support_set in test_loop_data_selection.items():
         best_trial = optuna_study.best_trial

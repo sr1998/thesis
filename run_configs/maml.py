@@ -69,7 +69,7 @@ def get_setup():
             "model__dropout_rate": model__dropout_rate,
             "model__layer_norm": model__layer_norm,
             "model__batch_norm": False,
-            "model__activation": None,
+            "model__activation": 'relu',
             "model__weight_decay": model__weight_decay
         }
     
