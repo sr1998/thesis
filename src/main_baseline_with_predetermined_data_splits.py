@@ -1,3 +1,4 @@
+from functools import partial
 import os
 import sys
 from importlib import import_module
@@ -277,7 +278,7 @@ def main(
                 trial,
             ),
             n_trials=tuning_num_samples,
-            callbacks=[optuna_wandb_callback],
+            callbacks=[partial(optuna_wandb_callback, outer_cv_step=i)],
         )
         try:
             fig = plot_param_importances(optuna_study)

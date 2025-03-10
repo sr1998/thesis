@@ -29,7 +29,7 @@ def get_setup(model_name, with_oversampling=True):
     # outer_cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
     n_outer_splits = 10
     n_inner_splits = 3
-    tuning_num_samples = 100 if model_name == "NeuralNet" else 50
+    tuning_num_samples = 50
 
     outer_cv_config = {
         "type": ShuffleSplit,

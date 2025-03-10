@@ -42,7 +42,7 @@ def rf_search_space_sampler(optuna_trial, best_fit_scorer):
     }
 
 def nn_search_space_sampler(optuna_trial):
-        model__n_epochs = optuna_trial.suggest_int("model__n_epochs", 1, 200)
+        # model__n_epochs = optuna_trial.suggest_int("model__n_epochs", 1, 200)
         model__batch_size = optuna_trial.suggest_int("model__batch_size", 2, 32, step=2)
         model__lr = optuna_trial.suggest_float("model__lr", 1e-5, 1e-2, log=True)
         # model__scale_factor = optuna_trial.suggest_float("model__scale_factor", 1.0, 1000.0, log=True)
@@ -50,9 +50,9 @@ def nn_search_space_sampler(optuna_trial):
         model__dropout_rate = optuna_trial.suggest_float(
             "model__dropout_rate", 0.1, 0.7
         )
-        model__layer_norm = optuna_trial.suggest_categorical(
-            "model__layer_norm", [True, False]
-        )
+        # model__layer_norm = optuna_trial.suggest_categorical(
+        #     "model__layer_norm", [True, False]
+        # )
         # model__batch_norm = optuna_trial.suggest_categorical("model__batch_norm", [True, False])
         # model__activation = optuna_trial.suggest_categorical("model__activation", ["relu", "leaky_relu", "elu", "gelu", "selu"])
         base_size = optuna_trial.suggest_int(
@@ -82,7 +82,7 @@ def nn_search_space_sampler(optuna_trial):
             model__layer_sizes.append(layer_size)
 
         return {
-            "model__n_epochs": model__n_epochs,
+            "model__n_epochs": 100,
             "model__batch_size": model__batch_size,
             "model__lr": model__lr,
             "do_normalization_before_scaling": False,
@@ -90,7 +90,7 @@ def nn_search_space_sampler(optuna_trial):
             "model__num_layers": model__num_layers,
             "model__layer_sizes": model__layer_sizes,
             "model__dropout_rate": model__dropout_rate,
-            "model__layer_norm": model__layer_norm,
+            "model__layer_norm": True,
             "model__batch_norm": False,
             "model__activation": "relu",
         }

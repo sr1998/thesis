@@ -510,17 +510,17 @@ def extend_train_with_support_set_from_eval(
     return train_data, train_labels, eval_data, eval_labels
 
 
-def optuna_wandb_callback(study, trial):
+def optuna_wandb_callback(study, trial, outer_cv_step: int | None = None):
     # Log parameters
-    trial_params = {f"trial/{k}": v for k, v in trial.params.items()}
+    prefix = f"trial_for_outer_{outer_cv_step}" if outer_cv_step else "trial"
+    trial_params = {f"{prefix}/{k}": v for k, v in trial.params.items()}
 
     # Log metrics
     metrics = {
-        "trial": trial.number,
-        "trial/number": trial.number,
-        "trial/value": trial.value,
-        "trial/best_value": study.best_value,
-        "trial/duration_seconds": trial.duration.total_seconds()
+        f"{prefix}/number": trial.number,
+        f"{prefix}/value": trial.value,
+        f"{prefix}/best_value": study.best_value,
+        f"{prefix}/duration_seconds": trial.duration.total_seconds()
         if hasattr(trial, "duration")
         else None,
     }
