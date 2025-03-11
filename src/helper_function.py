@@ -224,7 +224,6 @@ def circular_slice(arr: Iterable, start: int, end: int) -> Iterable:
 def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
     """Get the pipeline with the hyperparameters sampled from the search space."""
     trial_config = search_space_sampler(optuna_trial)
-    logger.debug(f"trial_config:\n{trial_config}")
 
     if what == "mgnify":
         n_neighbors = trial_config["preprocessor__feature_space_change__n_neighbors"]
