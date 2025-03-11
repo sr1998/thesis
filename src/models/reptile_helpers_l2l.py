@@ -4,12 +4,12 @@ def fast_adapt(
     learner,
     loss,
     adapt_opt,
-    adaptation_steps,
-    initial_lr: int = 0.5,
-    inner_rl_reduction_factor: int = 1.5,
+    n_adaptation_steps,
+    initial_lr,
+    inner_rl_reduction_factor,
 ):
     # Adapt the model
-    for step in range(adaptation_steps):
+    for step in range(n_adaptation_steps):
         lr = initial_lr / inner_rl_reduction_factor
         for param_group in adapt_opt.param_groups:
             param_group["lr"] = lr

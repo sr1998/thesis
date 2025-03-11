@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 import wandb
 from src.data.sun_et_al import BinaryFewShotBatchSampler, MicrobiomeDataset
 from src.helper_function import column_rename_for_sun_et_al_metadata, df_str_for_loguru
-from src.models import maml_with_l2l
+from src.models import maml_with_l2l, reptile_with_l2l
 from src.models.models import HighlyFlexibleModel
 
 
@@ -53,6 +53,17 @@ def get_metalearning_model_from_trial(
     train_metadata = column_rename_for_sun_et_al_metadata(train_metadata)
     eval_metadata = column_rename_for_sun_et_al_metadata(eval_metadata)
 
+    # # For testing: make limited data for testing of only 3 Groups
+    # grouped = train_metadata.groupby("project")
+    # train_metadata_new = pd.DataFrame()
+    # for i, (group_name, group) in enumerate(grouped):
+    #     if i < 3:
+    #         train_metadata_new = pd.concat([train_metadata_new, group])
+    #     else:
+    #         break
+    # train_data = train_data.loc[train_metadata_new.index]
+    # train_metadata = train_metadata_new
+
     # Create Datasets for DataLoader
     train = MicrobiomeDataset(train_data, train_metadata)
     eval = MicrobiomeDataset(
@@ -61,7 +72,10 @@ def get_metalearning_model_from_trial(
 
     # Create DataLoaders
     sampler = BinaryFewShotBatchSampler(
-        train, train_k_shot, include_query=True, shuffle=True
+        train,
+        train_k_shot,
+        include_query=True if algorithm == "MAML" else False,
+        shuffle=True,
     )
     train_loader = DataLoader(train, batch_sampler=sampler)
 
@@ -104,33 +118,31 @@ def get_metalearning_model_from_trial(
             train_k_shot=train_k_shot,
             eval_k_shot=eval_k_shot,
             loss_fn=extra_configs["loss_fn"],
-            weight_decay=trial_config["model__weight_decay"]
+            weight_decay=trial_config["model__weight_decay"],
         )
 
     # Not converging at all with some tested hyperparams. Wrong implementation maybe. To be figured out when time allows.
     elif algorithm == "Reptile":
-        # Instantiate the Reptile meta-learner.
-        # reptile = reptile_with_l2l.Reptile(
-        #     model=model,
-        #     train_n_gradient_steps=n_gradient_steps,
-        #     eval_n_gradient_steps=n_gradient_steps,
-        #     device=device,
-        #     inner_lr_range=inner_lr_range,
-        #     inner_lr_reduction_factor=inner_lr_reduction_factor,
-        #     outer_lr_range=outer_lr_range,
-        #     betas=betas,
-        #     k_shot=train_k_shot,
-        #     loss_fn=loss_fn,
-        # )
+        if "betas" not in trial_config:
+            logger.warning(
+                "No betas found in trial_config. Using default values (0.9, 0.999)"
+            )
+            trial_config["betas"] = (0.9, 0.999)
 
-        # reptile.fit(
-        #     train_dataloader=train_loader,
-        #     n_epochs=n_epochs,
-        #     n_parallel_tasks=n_parallel_tasks,
-        #     evaluate_train=True,
-        #     val_dataloader=val_loader,
-        # )
-        raise NotImplementedError("Reptile is not implemented yet.")
+        model = reptile_with_l2l.Reptile(
+            model=model,
+            train_n_gradient_steps=extra_configs["n_gradient_steps"],
+            eval_n_gradient_steps=extra_configs["n_gradient_steps"],
+            device=extra_configs["device"],
+            inner_lr_range=trial_config["inner_lr_range"],
+            inner_lr_reduction_factor=trial_config["inner_lr_reduction_factor"],
+            outer_lr_range=trial_config["outer_lr_range"],
+            train_k_shot=train_k_shot,
+            eval_k_shot=eval_k_shot,
+            betas=trial_config["betas"],
+            loss_fn=extra_configs["loss_fn"],
+            weight_decay=trial_config["model__weight_decay"],
+        )
     else:
         raise ValueError(f"Unknown algorithm: {algorithm}")
 
@@ -148,6 +160,8 @@ def hyp_param_val_for_metalearning(
     search_space_sampler: callable,
     trial: optuna.Trial,
     extra_configs: dict,
+    early_stop_pat=None,
+    early_stop_metric="loss",
 ):
     if val_k_shot is None:
         val_k_shot = train_k_shot
@@ -176,9 +190,6 @@ def hyp_param_val_for_metalearning(
             trial_config,
             extra_configs,
         )
-
-        early_stop_pat = 10
-        early_stop_metric = "loss"
 
         logger.info("Fitting model")
         train_results, val_results = model.fit(

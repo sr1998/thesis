@@ -8,13 +8,15 @@ from loguru import logger
 from torch import cat as torch_cat
 from torch import device as torch_device
 from torch import nn, no_grad, zeros_like
+from torch import save as torch_save
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import SGD, Adam, Optimizer
 from torch.utils.data import DataLoader
 
 import src.models.reptile_helpers_l2l as reptile_helpers_l2l
 import wandb
-from src.helper_function import metalearning_binary_target_changer, set_learning_rate
+from src.data.helper_functions import metalearning_binary_target_changer
+from src.models.helper_functions import batch_tasks, set_learning_rate
 from src.scoring.metalearning_scoring_fn import compute_metrics
 
 
@@ -28,30 +30,164 @@ class Reptile:  # Assumes binary classifier for now
         device: torch_device,
         inner_lr_range: tuple[float, float],
         outer_lr_range: tuple[float, float],
-        inner_rl_reduction_factor: float,
+        inner_lr_reduction_factor: float,
+        train_k_shot: int,
+        eval_k_shot: int = None,
         betas: tuple[float, float] = None,
-        k_shot: int = None,
         loss_fn: nn.Module = None,
+        weight_decay: float = 0.0,
     ):
-        assert (
-            next(model.parameters()).device == device
-        ), "Model parameters are not on the specified device"
+        model.to(device)
 
         self.model = model
         self.train_n_gradient_steps = train_n_gradient_steps
         self.eval_n_gradient_steps = eval_n_gradient_steps
-        # self.loss_fn = loss_function  # TODO hypere_params?
         self.loss_fn = loss_fn or BCEWithLogitsLoss()
         self.device = device
         self.inner_lr_range = inner_lr_range
         self.inner_lr = max(inner_lr_range)
-        self.inner_rl_reduction_factor = inner_rl_reduction_factor
+        self.inner_lr_reduction_factor = inner_lr_reduction_factor
         self.outer_lr_range = outer_lr_range
         self.outer_lr = max(outer_lr_range)
         self.betas = betas or (0.0, 0.999)
-        self.k_shot = k_shot
+        self.train_k_shot = train_k_shot
+        self.eval_k_shot = eval_k_shot or train_k_shot
+        self.weight_decay = weight_decay
 
-    def evaluate(self, dataloader: DataLoader, epoch: int):
+        self.outer_optimizer = None
+        self.current_epoch = 0
+
+        # Initialize inner optimizer state that can be reused across tasks
+        inner_optimizer = Adam(
+            self.model.parameters(), lr=self.inner_lr, betas=self.betas
+        )
+        self.inner_optimizer_state = inner_optimizer.state_dict()
+
+    def initialize_optimizer(self):
+        """Initialize or reset the optimizer with current learning rate"""
+        self.outer_optimizer = SGD(
+            self.model.parameters(), self.outer_lr, weight_decay=self.weight_decay
+        )
+        return self.outer_optimizer
+
+    def update_learning_rates(self, epoch, total_epochs):
+        """Update learning rates based on current epoch"""
+        self.outer_lr = min(self.outer_lr_range) * (epoch / total_epochs) + max(
+            self.outer_lr_range
+        ) * (1 - epoch / total_epochs)
+        if self.outer_optimizer:
+            set_learning_rate(self.outer_optimizer, self.outer_lr)
+        return self.outer_lr
+
+    def train_step(self, batch, n_parallel_tasks=1):
+        """Perform a single training step on a batch of tasks"""
+        if self.outer_optimizer is None:
+            self.initialize_optimizer()
+
+        meta_train_error = 0.0
+        predictions_all = []
+        targets_all = []
+
+        # Track task-specific adapted parameters
+        task_adapted_params = []
+        num_tasks_processed = 0
+
+        # Process each task in the batch
+        for task_idx in range(n_parallel_tasks):
+            try:
+                X, y = batch[task_idx]
+            except IndexError:
+                # Handle case where batch doesn't have enough tasks
+                continue
+
+            # Prep task data
+            y = metalearning_binary_target_changer(y)
+            X = X.to(self.device)
+            y = y.to(self.device)
+
+            # Clone model and adapt to task
+            learner = deepcopy(self.model)
+            inner_optimizer = Adam(
+                learner.parameters(), lr=self.inner_lr, betas=self.betas
+            )
+            inner_optimizer.load_state_dict(self.inner_optimizer_state)
+            learner = reptile_helpers_l2l.fast_adapt(
+                X,
+                y,
+                learner,
+                self.loss_fn,
+                inner_optimizer,
+                self.train_n_gradient_steps,
+                initial_lr=self.inner_lr,
+                inner_rl_reduction_factor=self.inner_lr_reduction_factor,
+            )
+
+            # Store the adapted parameters for this task
+            task_adapted_params.append([p.data.clone() for p in learner.parameters()])
+            num_tasks_processed += 1
+
+            # For tracking metrics, evaluate on the same data
+            learner.eval()
+            with no_grad():
+                predictions = learner(X).squeeze()
+                evaluation_error = self.loss_fn(predictions, y)
+                meta_train_error += evaluation_error.item()
+
+                predictions_all.append(predictions.detach().cpu())
+                targets_all.append(y.detach().cpu())
+
+        # Update model if there were tasks in the batch
+        if num_tasks_processed > 0:
+            # True batched Reptile update as per the paper (equation 5)
+            # φ ← φ + (ε/n) * Σ(φ̃ᵢ - φ)
+            self.outer_optimizer.zero_grad()
+
+            # Compute the average of differences between adapted parameters and original parameters
+            for i, param in enumerate(self.model.parameters()):
+                # Initialize gradient
+                param_diff = zeros_like(param.data)
+
+                # Sum up all the differences (φ̃ᵢ - φ) for each task
+                for task_params in task_adapted_params:
+                    param_diff += task_params[i] - param.data
+
+                # Average the differences
+                param_diff /= num_tasks_processed
+
+                # Set the gradient to be the parameter difference
+                # (This works because the optimizer will do: param = param - lr * grad)
+                # where we want: param = param + lr * avg_(adapted - param)
+                param.grad = (
+                    -param_diff
+                )  # Negative because optimizers do gradient descent
+
+            # Apply the update
+            self.outer_optimizer.step()
+
+            # Update the inner optimizer state to match the new model parameters
+            # This ensures that future task adaptations start with an optimizer
+            # state that's consistent with the updated parameters
+            temp_inner_optimizer = Adam(
+                self.model.parameters(), lr=self.inner_lr, betas=self.betas
+            )
+            self.inner_optimizer_state = temp_inner_optimizer.state_dict()
+
+            # Compute metrics
+            meta_train_error /= num_tasks_processed
+            big_preds = torch_cat(predictions_all, dim=0)
+            big_targets = torch_cat(targets_all, dim=0)
+            metrics = compute_metrics(big_preds, big_targets)
+
+            return {
+                "loss": meta_train_error,
+                **metrics,
+                "predictions": big_preds,
+                "targets": big_targets,
+            }
+
+        return None
+
+    def evaluate_step(self, batch):
         """Evaluate the current model on the full dataset.
 
         This differs from training, as it does the inner loop on a support set but evaluates on a query set,
@@ -61,58 +197,108 @@ class Reptile:  # Assumes binary classifier for now
         outputs_all = []
         targets_all = []
 
-        learner = deepcopy(self.model)
-        inner_optimizer = Adam(
-            learner.parameters(), lr=self.inner_lr, betas=self.betas
-        )
-        inner_optimizer.load_state_dict(self.inner_optimizer_state)
-        for X, y in dataloader:
-            # get support/query data
+        # Backup the training optimizer state to avoid information leakage
+        # as recommended in the Reptile paper
+        original_optimizer_state = deepcopy(self.inner_optimizer_state)
+
+        # Process each task in the batch
+        for X, y in batch:
+            # Prep data
             X, y = X.to(self.device), y.to(self.device)
-            X_support = X[: self.k_shot * 2, :]
-            y_support = y[: self.k_shot * 2]
-            X_query = X[self.k_shot * 2 :, :]
-            y_query = y[self.k_shot * 2 :]
+            X_support = X[: self.eval_k_shot * 2, :]
+            y_support = y[: self.eval_k_shot * 2]
+            X_query = X[self.eval_k_shot * 2 :, :]
+            y_query = y[self.eval_k_shot * 2 :]
+
+            # Clone and adapt model
+            learner = deepcopy(self.model)
+
+            # Create a fresh optimizer for evaluation to prevent information leakage
+            # Set β1 = 0 for Adam as recommended in the paper
+            inner_optimizer = Adam(
+                learner.parameters(), lr=self.inner_lr, betas=self.betas
+            )
+            # Note: Not loading the training optimizer state here - fresh optimizer
+
+            # Adapt the model
             learner = reptile_helpers_l2l.fast_adapt(
                 X_support,
                 y_support,
                 learner,
                 self.loss_fn,
                 inner_optimizer,
-                self.train_n_gradient_steps,
+                self.eval_n_gradient_steps,  # Note: using eval steps here
                 self.inner_lr,
-                self.inner_rl_reduction_factor,
+                self.inner_lr_reduction_factor,
             )
+
+            # Evaluate
             learner.eval()
             with no_grad():
-                outputs = learner(X_query).squeeze()
-                eval_error = self.loss_fn(outputs, y_query)
-                meta_test_error += eval_error.item()
+                predictions = learner(X_query).squeeze()
+                evaluation_error = self.loss_fn(predictions, y_query)
+                meta_test_error += evaluation_error.item()
 
-                outputs_all.append(outputs.detach().cpu())
+                outputs_all.append(predictions.detach().cpu())
                 targets_all.append(y_query.detach().cpu())
 
-        # # Compute final metrics
-        meta_test_error /= len(dataloader)
-        big_preds = torch_cat(outputs_all, dim=0)
-        big_targets = torch_cat(targets_all, dim=0)
-        final_scores = compute_metrics(big_preds, big_targets)
-        wandb.log(
-            {
-                "val/loss": meta_test_error,
-                "val/accuracy": final_scores["accuracy"],
-                "val/f1": final_scores["f1"],
-                "val/precision": final_scores["precision"],
-                "val/recall": final_scores["recall"],
-                "val/roc_auc": final_scores["roc_auc"],
-                "epoch": epoch,
-            },
-        )
+        # Restore the original optimizer state after evaluation
+        self.inner_optimizer_state = original_optimizer_state
 
-        logger.info(f"Evaluation after epoch {epoch}: Loss = {meta_test_error:.2f}")
-        logger.info(
-            f"Accuracy = {final_scores['accuracy']:.2f}, F1 = {final_scores['f1']:.2f}, Precision = {final_scores['precision']:.2f}, Recall = {final_scores['recall']:.2f}, ROC-AUC = {final_scores['roc_auc']:.2f}"
-        )
+        # Compute metrics
+        if len(outputs_all) > 0:
+            meta_test_error /= len(batch)
+            big_preds = torch_cat(outputs_all, dim=0)
+            big_targets = torch_cat(targets_all, dim=0)
+            metrics = compute_metrics(big_preds, big_targets)
+
+            return {
+                "loss": meta_test_error,
+                **metrics,
+                "predictions": big_preds,
+                "targets": big_targets,
+            }
+
+        return None
+
+    def evaluate(
+        self,
+        dataloader: DataLoader,
+        score_name_prefix: str,
+        epoch: int = None,
+        log_metrics: bool = True,
+        log_step: int = None,
+    ):
+        """Evaluate the model on the entire validation dataset"""
+        self.model.eval()
+
+        all_batches = list(dataloader)
+        results = self.evaluate_step(all_batches)
+
+        if log_metrics and results:
+            val_log = {
+                f"{score_name_prefix}/loss": results["loss"],
+                f"{score_name_prefix}/accuracy": results["accuracy"],
+                f"{score_name_prefix}/f1": results["f1"],
+                f"{score_name_prefix}/precision": results["precision"],
+                f"{score_name_prefix}/recall": results["recall"],
+                f"{score_name_prefix}/roc_auc": results["roc_auc"],
+                "epoch": epoch,
+                "log_step": log_step,
+            }
+            wandb.log(val_log)
+
+            logger.info(f"Evaluation after epoch {epoch}: Loss = {results['loss']:.2f}")
+            logger.info(
+                f"Accuracy = {results['accuracy']:.2f}, "
+                + f"F1 = {results['f1']:.2f}, "
+                + f"Precision = {results['precision']:.2f}, "
+                + f"Recall = {results['recall']:.2f}, "
+                + f"ROC-AUC = {results['roc_auc']:.2f}"
+            )
+
+        self.model.train()
+        return results
 
     def fit(
         self,
@@ -120,125 +306,92 @@ class Reptile:  # Assumes binary classifier for now
         train_dataloader: DataLoader,
         n_epochs: int,
         n_parallel_tasks: int,
-        evaluate_train: bool = False,
-        val_dataloader: DataLoader = None,
+        eval_dataloader: DataLoader = None,
+        val_or_test: str = "val",
+        early_stopping_patience: int = None,
+        early_stopping_metric: str = "loss",
+        log_metrics: bool = True,
+        score_name_prefix: str = None,
+        save_best_model_path: str = None,
     ):
-        if evaluate_train:
-            assert (
-                wandb.run is not None
-                and val_dataloader is not None
-                and self.k_shot is not None
-            ), "Missing arguments for evaluation"
-
-        # we want each epoch to go through the whole dataset
-        n_iters = n_epochs * (len(train_dataloader) // n_parallel_tasks + 1)
-        logger.info(
-            f"Starting training with {n_iters} iterations and {n_parallel_tasks} parallel tasks."
-        )
-        epoch_count = 0
-
         self.model.train()
-        outer_optimizer = SGD(self.model.parameters(), self.outer_lr)
-        inner_optimizer = Adam(
-            self.model.parameters(), lr=self.inner_lr, betas=self.betas
+        self.initialize_optimizer()
+        score_name_prefix = score_name_prefix + "." if score_name_prefix else ""
+
+        best_metric_value = (
+            float("inf") if "loss" in early_stopping_metric else -float("inf")
         )
-        self.inner_optimizer_state = inner_optimizer.state_dict()
+        patience_counter = 0
 
-        # new_outer_lr = self.outer_lr * (1.0 - (epoch_count / float(n_epochs)) ** 0.5)
-        # self._set_learning_rate(new_outer_lr)
-        if evaluate_train:
-            self.evaluate(val_dataloader, epoch_count)
-        task_iterator = iter(train_dataloader)
+        for epoch in range(n_epochs):
+            if epoch % 10 == 0:
+                logger.info(f"Epoch {epoch+1}/{n_epochs}")
 
-        for i in range(n_iters):
-            outer_optimizer.zero_grad()
-            meta_train_error = 0.0
-            outputs_all = []
-            targets_all = []
+            # log every 10 epochs, overwriting previous log
+            if log_metrics and epoch % 10 == 0:
+                train_results = self.evaluate(
+                    train_dataloader, f"{score_name_prefix}train", epoch, log_metrics
+                )
 
-            # zero-grad the parameters
-            for p in self.model.parameters():
-                p.grad = zeros_like(p.data)
+            # Validation phase
+            if eval_dataloader:
+                val_result = self.evaluate(
+                    eval_dataloader,
+                    f"{score_name_prefix}{val_or_test}",
+                    epoch,
+                    log_metrics=True if epoch % 10 == 0 and log_metrics else False,
+                )
 
-            # n_parallel_batch models take self.train_n_gradient_steps, each for different tasks
-            # updating a copy of global_model to parameters phi'. This gives a difference
-            # phi - phi', contributing to model_param_deltas.
-            for j in range(n_parallel_tasks):
-                # get a task
-                try:
-                    X, y = next(task_iterator)
-                except StopIteration:
-                    # DataLoader is exhausted, meaning one epoch is done.
-                    epoch_count += 1
-                    # Update outer_lr
-                    self.outer_lr = min(self.outer_lr_range) * (
-                        epoch_count / n_epochs
-                    ) + max(self.outer_lr_range) * (1 - epoch_count / n_epochs)
-                    set_learning_rate(outer_optimizer, self.outer_lr)
+                # Early stopping check
+                if early_stopping_patience:
+                    current_metric = val_result[early_stopping_metric]
 
-                    logger.info(
-                        f"Epoch {epoch_count} complete at iteration {i+1}/{n_iters} with {n_parallel_tasks} parallel tasks and {len(train_dataloader)} total tasks. Reinitializing DataLoader for next epoch."
+                    improved = (
+                        early_stopping_metric == "loss"
+                        and current_metric < best_metric_value
+                    ) or (
+                        early_stopping_metric != "loss"
+                        and current_metric > best_metric_value
                     )
 
-                    if evaluate_train:
-                        self.evaluate(val_dataloader, epoch_count)
-                    # prevents the model from training for more on some tasks than others
-                    if epoch_count == n_epochs:
-                        logger.info(
-                            f"Ending training as {n_epochs} epochs have been completed."
-                        )
-                        return
-                    task_iterator = iter(train_dataloader)
-                    X, y = next(task_iterator)
-                y = metalearning_binary_target_changer(y)
-                X, y = X.to(self.device), y.to(self.device)
+                    if improved:
+                        best_metric_value = current_metric
+                        patience_counter = 0
 
-                learner = deepcopy(self.model)
-                inner_optimizer = Adam(
-                    learner.parameters(), lr=self.inner_lr, betas=self.betas
-                )
-                inner_optimizer.load_state_dict(self.inner_optimizer_state)
-                learner = reptile_helpers_l2l.fast_adapt(
-                    X,
-                    y,
-                    learner,
-                    self.loss_fn,
-                    inner_optimizer,
-                    self.train_n_gradient_steps,
-                    self.inner_lr,
-                    self.inner_rl_reduction_factor,
-                )
-                outputs = learner(X).squeeze()
-                train_error = self.loss_fn(outputs, y)
+                        # Save the best model
+                        if save_best_model_path:
+                            torch_save(self, save_best_model_path)
+                            logger.info(
+                                f"Saved new best model with {early_stopping_metric} = {current_metric:.4f}"
+                            )
+                    else:
+                        patience_counter += 1
 
-                self.inner_optimizer_state = inner_optimizer.state_dict()
-                for p, l in zip(self.model.parameters(), learner.parameters()):
-                    p.grad.data.add(l.data, alpha=-1.0)
+                    if patience_counter >= early_stopping_patience:
+                        logger.info(f"Early stopping triggered after {epoch+1} epochs")
+                        break
 
-                meta_train_error += train_error.item()
-                outputs_all.append(outputs.detach().cpu())
-                targets_all.append(y.detach().cpu())
-                
+            self.current_epoch = epoch
+            self.update_learning_rates(epoch, n_epochs)
 
-            # Calculate and log metric after for the current original model
-            meta_train_error /= n_parallel_tasks
-            big_preds = torch_cat(outputs_all, dim=0)
-            big_targets = torch_cat(targets_all, dim=0)
-            final_scores = compute_metrics(big_preds, big_targets)
-            wandb.log(
-                {
-                    "train/loss": meta_train_error,
-                    "train/accuracy": final_scores["accuracy"],
-                    "train/f1": final_scores["f1"],
-                    "train/precision": final_scores["precision"],
-                    "train/recall": final_scores["recall"],
-                    "train/roc_auc": final_scores["roc_auc"],
-                    "epoch": epoch_count,
-                    "iteration": i,
-                },
+            # Training phase
+            batches = batch_tasks(train_dataloader, n_parallel_tasks)
+            for batch in batches:
+                self.train_step(batch, n_parallel_tasks)
+
+        # Final evaluation
+        train_results = self.evaluate(
+            train_dataloader, f"{score_name_prefix}train", n_epochs, log_metrics
+        )
+
+        # Validation phase
+        val_result = None
+        if eval_dataloader:
+            val_result = self.evaluate(
+                eval_dataloader,
+                f"{score_name_prefix}{val_or_test}",
+                n_epochs,
+                log_metrics=log_metrics,
             )
 
-            # Average the accumulated gradients and optimize
-            for p in self.model.parameters():
-                p.grad.data.mul_(1.0 / n_parallel_tasks).add_(p.data)
-            outer_optimizer.step()
+        return train_results, val_result

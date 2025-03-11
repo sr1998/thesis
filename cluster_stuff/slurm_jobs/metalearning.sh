@@ -1,18 +1,18 @@
 #!/bin/sh
 #SBATCH --job-name="metalearning"
 #SBATCH --partition=general,insy # Request partition.
-#SBATCH --qos=short                # This is how you specify QoS
-#SBATCH --time=01:30:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --qos=medium                # This is how you specify QoS
+#SBATCH --time=10:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
 #SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
 #SBATCH --mem=4GB                  # Request ... GB of RAM in total
-#SBATCH --gpus-per-task=1
+#SBATCH --gres=gpu:a40:1        # Request 1 GPU (A40) per node
 
 # If you use DATASETS_ROOT inside your script otherwise remove
 # export DATASETS_ROOT="/scratch/$USER/datasets"
-ALGORITHM="MAML"
+ALGORITHM="Reptile"
 STUDIES=(
     'ChenB_2020' 'ChuY_2021' 'HeQ_2017' 'HuY_2019'
     'HuangR_2020' 'LiJ_2017' 'LiR_2021'
@@ -29,10 +29,10 @@ STUDIES=(
 STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
-mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}_${STUDY}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${STUDY}"
 
-LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}_${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.out"
-ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}_${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.err"
+LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.out"
+ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.err"
 
 # Redirect stdout and stderr to these files
 exec > "$LOG_FILE" 2> "$ERR_FILE"
@@ -65,7 +65,6 @@ srun apptainer exec \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_metalearning \
     --datasource="sun et al" \
-    --config_script="run_configs.maml" \
     --algorithm="${ALGORITHM}" \
     --abundance_file="mpa4_species_profile_preprocessed.csv" \
     --metadata_file="sample_group_species_preprocessed.csv" \

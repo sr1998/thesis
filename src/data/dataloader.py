@@ -332,13 +332,15 @@ def get_cross_validation_sun_et_al_data_splits(
     train_metadata_df = metadata.drop(index=test_metadata_df.index)
     train_data_df = abundance_data.drop(index=test_data_df.index)
 
-    # if test_study can't provide 2*k_shot samples for the fewest occuring label, skip it and log
+    # if test_study can't provide 2*k_shot samples for the fewest occuring label, throw error
     min_label_count = test_metadata_df["Group"].value_counts().min()
     if min_label_count < 2 * k_shot:
         logger.warning(
             f"{test_study} can't give with 2*{k_shot} samples for the fewest occuring label. Falling back to a lower k_shot value.\nCANCEL IF DESIRED."
         )
-        k_shot = min_label_count // 2
+        raise ValueError(
+            f"{test_study} can't give with 2*{k_shot} samples for the fewest occuring label."
+        )
 
     remaining_studies = [study for study in study_names if study != test_study]
 

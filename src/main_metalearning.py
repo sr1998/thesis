@@ -2,6 +2,7 @@ import os
 import sys
 from importlib import import_module
 from pathlib import Path
+import traceback
 
 import optuna
 from optuna.visualization import plot_param_importances
@@ -10,6 +11,7 @@ from src.data.dataloader import (
     get_cross_validation_sun_et_al_data_splits,
 )
 from src.helper_function import (
+    get_cluster_save_directory,
     get_run_dir_for_experiment,
     optuna_wandb_callback,
 )
@@ -34,7 +36,6 @@ def main(
     # model_script: str,                    # optimization
     # model_name: str,                      # optimization
     datasource: str,
-    config_script: str,
     algorithm: str,
     abundance_file: str | Path,
     metadata_file: str | Path,
@@ -53,12 +54,14 @@ def main(
     # do_normalization_before_scaling: bool = True, # optimization
     # scale_factor_before_training: int = 100,      # optimization
     loss_fn: str = "BCELog",
-    betas: tuple[float, float] = (0.0, 0.999),
     use_wandb: bool = True,
     features_to_use: list[str] = None,
+    early_stop_patience: int = None,
+    early_stop_metric: str = "loss",
 ):
+    config_script = "run_configs.metalearning"
     config_module = import_module(config_script)
-    setup = config_module.get_setup()
+    setup = config_module.get_setup(algorithm)
     (
         n_outer_splits,
         n_inner_splits,
@@ -166,6 +169,7 @@ def main(
 
     wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_J{job_id}"
     run_dir = get_run_dir_for_experiment({"wandb_params": {"name": wandb_name}})
+    model_save_dir = get_cluster_save_directory({"wandb_params": {"name": wandb_name}}) or run_dir
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -207,6 +211,8 @@ def main(
             search_space_sampler,
             trial,
             config,
+            early_stop_pat=early_stop_patience,
+            early_stop_metric=early_stop_metric,
         ),
         n_trials=tuning_num_samples,
         callbacks=[optuna_wandb_callback],
@@ -222,8 +228,9 @@ def main(
             }
         )
         wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
-    except Exception:
-        pass
+    except Exception as e:
+        traceback.print_exc()
+        logger.error(f"Error in plotting param importance: {e}")
 
     for i, test_support_set in test_loop_data_selection.items():
         best_trial = optuna_study.best_trial
@@ -262,7 +269,7 @@ def main(
             val_or_test="test",
             log_metrics=True,
             score_name_prefix=f"outer_fold_{i}_fit",
-            # save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
+            # save_best_model_path=model_save_dir / f"best_model_outer_fold_{i}.pt",
         )
 
         train_res = {
@@ -311,17 +318,17 @@ def main(
 
 
 if __name__ == "__main__":
-    # fire.Fire(main)
+    fire.Fire(main)
 
-    main(
-        datasource="sun et al",
-        config_script="run_configs.maml",
-        algorithm="MAML",
-        abundance_file="mpa4_species_profile_preprocessed.csv",
-        metadata_file="sample_group_species_preprocessed.csv",
-        test_study="JieZ_2017",
-        balanced_or_unbalanced="balanced",
-        n_gradient_steps=2,
-        n_parallel_tasks=5,
-        train_k_shot=10,
-    )
+    # main(
+    #     datasource="sun et al",
+    #     algorithm="MAML",
+    #     abundance_file="mpa4_species_profile_preprocessed.csv",
+    #     metadata_file="sample_group_species_preprocessed.csv",
+    #     test_study="JieZ_2017",
+    #     balanced_or_unbalanced="balanced",
+    #     n_gradient_steps=5,
+    #     n_parallel_tasks=5,
+    #     train_k_shot=10,
+    #     use_wandb=False,
+    # )
