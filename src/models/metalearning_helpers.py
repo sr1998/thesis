@@ -203,7 +203,7 @@ def hyp_param_val_for_metalearning(
         )
 
         # update keys to include train and val prefixes
-        train_results = {f"train/{k}": v for k, v in train_results.items()}
+        train_results = {f"train/{k}": v for k, v in train_results.items()} if train_results else {}
         val_results = {f"val/{k}": v for k, v in val_results.items()}
 
         train_results.update(val_results)

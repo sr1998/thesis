@@ -1,5 +1,6 @@
 from functools import partial
 import os
+from pathlib import Path
 
 from imblearn.ensemble import BalancedRandomForestClassifier
 from loguru import logger
@@ -11,6 +12,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import ShuffleSplit
+from tabpfn import TabPFNClassifier
 from xgboost import XGBClassifier
 
 import run_configs.optuna_search_space_samplers as sss
@@ -36,6 +38,18 @@ def get_setup(algorithm):
         "cache_pipeline_steps": False,  # True giving errors
     }
 
+    if algorithm == "TabPFN":
+        cache_dir = Path("/tudelft.net/staff-umbrella/abeellabstudents/sramezani/")
+        if os.path.exists(cache_dir):
+            cache_dir = cache_dir / "tabpfn_cache"
+            cache_dir.mkdir(parents=True, exist_ok=True, mode=0o755)        
+            os.environ["TABPFN_MODEL_CACHE_DIR"] = str(cache_dir)
+            logger.info(f"Using cache dir: {cache_dir}")
+        else:
+            logger.warning(
+                f"Cache dir {cache_dir} does not exist. Using default cache dir."
+            )
+
     n_outer_splits = 10
     n_inner_splits = 3
     tuning_num_samples = 50
@@ -50,6 +64,7 @@ def get_setup(algorithm):
         "XGBoost": XGBClassifier(n_jobs=n_cpus),
         "NeuralNet": NeuralNetWrapper(),
         "BalancedRandomForestClassifier": BalancedRandomForestClassifier(n_jobs=n_cpus),
+        "TabPFN": TabPFNClassifier(memory_saving_mode=False, n_jobs=n_cpus, ignore_pretraining_limits=True),
     }[algorithm]
 
     standard_pipeline = create_pipeline(
@@ -93,6 +108,7 @@ def get_setup(algorithm):
         "BalancedRandomForestClassifier": partial(
             sss.rf_search_space_sampler, best_fit_scorer=best_fit_scorer
         ),
+        "TabPFN": None
     }[algorithm]
 
     return {

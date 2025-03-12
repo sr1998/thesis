@@ -191,25 +191,28 @@ def main(
     # split_permutation_importance = pd.DataFrame()
     split_rf_importance_df = pd.DataFrame()
 
-    optuna_study = optuna.create_study(
-            direction=tuning_mode,
-            study_name=f"hyper-param_optimization_for_{wandb.run.name}",
+    if search_space_sampler:
+        optuna_study = optuna.create_study(
+                direction=tuning_mode,
+                study_name=f"hyper-param_optimization_for_{wandb.run.name}",
+            )
+        optuna_study.optimize(
+            lambda trial: hyp_param_eval_for_baseline_metalearning(
+                datasource,
+                val_loop_data_selection,
+                train_data,
+                train_metadata,
+                balanced_or_unbalanced,
+                standard_pipeline,
+                scoring,
+                best_fit_scorer,
+                search_space_sampler,
+                trial,
+            ),
+            n_trials=tuning_num_samples,
         )
-    optuna_study.optimize(
-        lambda trial: hyp_param_eval_for_baseline_metalearning(
-            datasource,
-            val_loop_data_selection,
-            train_data,
-            train_metadata,
-            balanced_or_unbalanced,
-            standard_pipeline,
-            scoring,
-            best_fit_scorer,
-            search_space_sampler,
-            trial,
-        ),
-        n_trials=tuning_num_samples,
-    )
+    else: 
+        optuna_study = None
 
     for i, test_support_set in test_loop_data_selection.items():
         # outer cv data split (done here, as we need to extend the train data with the support set)
@@ -234,21 +237,26 @@ def main(
 
         test_query_labels = test_query_metadata["Group"]
 
-        best_trial = optuna_study.best_trial
-        # save best trial parameters + split for this loop
-        best_trial_params = best_trial.params
-        best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
-        # Convert to a dictionary format for easier table storage
-        # split_entry = {
-        #     "outer_cv_split": i,
-        #     **best_trial_params,  # Add all hyperparameters
-        # }
+        if optuna_study:
+            best_trial = optuna_study.best_trial
+            # save best trial parameters + split for this loop
+            best_trial_params = best_trial.params
+            best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+            # Convert to a dictionary format for easier table storage
+            # split_entry = {
+            #     "outer_cv_split": i,
+            #     **best_trial_params,  # Add all hyperparameters
+            # }
 
-        # split_config.append(split_entry)
+            # split_config.append(split_entry)
 
-        best_model = get_pipeline(
-            datasource, standard_pipeline, search_space_sampler, best_trial
-        )
+            best_model = get_pipeline(
+                datasource, standard_pipeline, search_space_sampler, best_trial
+            )
+        else:
+            best_trial = None
+            best_model = standard_pipeline
+
         best_model.fit(train_data_extended, train_labels_extended)
         # save the model
         if save_model:

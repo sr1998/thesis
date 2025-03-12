@@ -330,10 +330,10 @@ class Reptile:  # Assumes binary classifier for now
                 logger.info(f"Epoch {epoch+1}/{n_epochs}")
 
             # log every 10 epochs, overwriting previous log
-            if log_metrics and epoch % 10 == 0:
-                train_results = self.evaluate(
-                    train_dataloader, f"{score_name_prefix}train", epoch, log_metrics
-                )
+            # if log_metrics and epoch % 10 == 0:
+            #     train_results = self.evaluate(
+            #         train_dataloader, f"{score_name_prefix}train", epoch, log_metrics
+            #     )
 
             # Validation phase
             if eval_dataloader:
@@ -381,10 +381,10 @@ class Reptile:  # Assumes binary classifier for now
             for batch in batches:
                 self.train_step(batch, n_parallel_tasks)
 
-        # Final evaluation
-        train_results = self.evaluate(
-            train_dataloader, f"{score_name_prefix}train", n_epochs, log_metrics
-        )
+        # # Final evaluation
+        # train_results = self.evaluate(
+        #     train_dataloader, f"{score_name_prefix}train", n_epochs, log_metrics
+        # )
 
         # Validation phase
         val_result = None
@@ -396,4 +396,4 @@ class Reptile:  # Assumes binary classifier for now
                 log_metrics=log_metrics,
             )
 
-        return train_results, val_result
+        return None, val_result

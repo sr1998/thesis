@@ -281,7 +281,7 @@ def main(
 
         train_res = {
             k: v for k, v in train_res.items() if k != "predictions" and k != "targets"
-        }
+        } if train_res else {}
         test_res = {
             k: v for k, v in test_res.items() if k != "predictions" and k != "targets"
         }
@@ -292,21 +292,22 @@ def main(
     # log overall results to wandb
     train_scores = pd.DataFrame(train_scores)
     test_scores = pd.DataFrame(test_scores)
-    train_mean = train_scores.mean()
+    train_mean = train_scores.mean() if not train_scores.empty else pd.Series()
     test_mean = test_scores.mean()
-    train_std = train_scores.std()
+    train_std = train_scores.std() if not train_scores.empty else pd.Series()
     test_std = test_scores.std()
 
     # Log bar plots for train and test metrics
     train_summary_df = pd.DataFrame(
         {"Metric": train_mean.index, "Mean": train_mean.values, "Std": train_std.values}
-    )
+    ) if not train_scores.empty else pd.DataFrame()
 
     test_summary_df = pd.DataFrame(
         {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
     )
 
-    wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
+    if not train_summary_df.empty:
+        wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
     wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
 
     # Save all outer CV splits and best trial parameters
