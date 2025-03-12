@@ -48,7 +48,7 @@ def main(
     save_model: bool = False,
 ):
     """Run the baseline pipeline for the baseline meta-learning inspired approach."""
-    config_script = "run_configs.rf_metalearning_baseline_for_sun_et_al"
+    config_script = "run_configs.metalearning_inspired_baseline"
     config_module = import_module(config_script)
     setup = config_module.get_setup(algorithm)
     (
