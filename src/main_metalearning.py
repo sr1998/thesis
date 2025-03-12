@@ -175,6 +175,7 @@ def main(
     wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_J{job_id}"
     run_dir = get_run_dir_for_experiment({"wandb_params": {"name": wandb_name}})
     model_save_dir = get_cluster_save_directory({"wandb_params": {"name": wandb_name}}) or run_dir
+    logger.info(f"Model save dir: {model_save_dir}")
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -203,47 +204,51 @@ def main(
     test_scores = []
     # split_config = []
 
-    optuna_study = optuna.create_study(
-        direction=tuning_mode,
-        study_name=f"hyper-param_optimization_for_{wandb.run.name}",
-    )
-    optuna_study.optimize(
-        lambda trial: hyp_param_val_for_metalearning(
-            algorithm,
-            val_loop_data_selection,
-            train_data,
-            train_metadata,
-            train_k_shot,
-            train_k_shot,
-            search_space_sampler,
-            trial,
-            config,
-            early_stop_pat=early_stop_patience,
-            early_stop_metric=early_stop_metric,
-        ),
-        n_trials=tuning_num_samples,
-        callbacks=[optuna_wandb_callback],
-    )
-    try:
-        fig = plot_param_importances(optuna_study)
-        wandb.log({"param_imp_fig": wandb.Plotly(fig)})
-        param_importance = optuna.importance.get_param_importances(optuna_study)
-        param_importance_df = pd.DataFrame(
-            {
-                "Parameter": list(param_importance.keys()),
-                "Importance": list(param_importance.values()),
-            }
+    if tuning_num_samples > 0:
+        optuna_study = optuna.create_study(
+            direction=tuning_mode,
+            study_name=f"hyper-param_optimization_for_{wandb.run.name}",
         )
-        wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
-    except Exception as e:
-        traceback.print_exc()
-        logger.error(f"Error in plotting param importance: {e}")
+        optuna_study.optimize(
+            lambda trial: hyp_param_val_for_metalearning(
+                algorithm,
+                val_loop_data_selection,
+                train_data,
+                train_metadata,
+                train_k_shot,
+                train_k_shot,
+                search_space_sampler,
+                trial,
+                config,
+                early_stop_pat=early_stop_patience,
+                early_stop_metric=early_stop_metric,
+            ),
+            n_trials=tuning_num_samples,
+            callbacks=[optuna_wandb_callback],
+        )
+        try:
+            fig = plot_param_importances(optuna_study)
+            wandb.log({"param_imp_fig": wandb.Plotly(fig)})
+            param_importance = optuna.importance.get_param_importances(optuna_study)
+            param_importance_df = pd.DataFrame(
+                {
+                    "Parameter": list(param_importance.keys()),
+                    "Importance": list(param_importance.values()),
+                }
+            )
+            wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
+        except Exception as e:
+            traceback.print_exc()
+            logger.error(f"Error in plotting param importance: {e}")
 
     for i, test_support_set in test_loop_data_selection.items():
-        best_trial = optuna_study.best_trial
-        # save best trial parameters + split for this loop
-        best_trial_params = best_trial.params
-        best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+        if tuning_num_samples > 0:
+            best_trial = optuna_study.best_trial
+            # save best trial parameters + split for this loop
+            best_trial_params = best_trial.params
+            best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+        else:
+            best_trial = None
         # split_config.append(
         #     {
         #         "outer_cv_split": i,
@@ -269,14 +274,14 @@ def main(
         train_res, test_res = best_model.fit(
             train_dataloader=train_loader,
             n_epochs=int(
-                best_trial.user_attrs["actual_epochs"] * 1.1
-            ),  # 10% more epochs
+                best_trial.user_attrs["actual_epochs"]
+            ), # 10% more epochs
             n_parallel_tasks=n_parallel_tasks,
             eval_dataloader=test_loader,
             val_or_test="test",
             log_metrics=True,
             score_name_prefix=f"outer_fold_{i}_fit",
-            # save_best_model_path=model_save_dir / f"best_model_outer_fold_{i}.pt",
+            save_best_model_path=model_save_dir / f"best_model_outer_fold_{i}.pt",
         )
 
         train_res = {
@@ -330,7 +335,7 @@ if __name__ == "__main__":
 
     # main(
     #     datasource="sun et al",
-    #     algorithm="MAML",
+    #     algorithm="Reptile",
     #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
     #     test_study="JieZ_2017",
@@ -338,5 +343,5 @@ if __name__ == "__main__":
     #     n_gradient_steps=5,
     #     n_parallel_tasks=5,
     #     train_k_shot=10,
-    #     use_wandb=False,
+    #     use_wandb=True,
     # )

@@ -10,7 +10,7 @@ def get_setup(algorithm: str):
     n_inner_splits = 3
     tuning_mode = "maximize"
     best_fit_scorer = "f1"
-    tuning_num_samples = 25
+    tuning_num_samples = 50
 
     return {
         "n_outer_splits": n_outer_splits,
