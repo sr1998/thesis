@@ -109,14 +109,13 @@ class MAML:
             )
 
             # Make predictions and compute loss
-            with no_grad():
-                predictions = learner(X_query).squeeze()
-                evaluation_error = self.loss_fn(predictions, y_query)
-                evaluation_error.backward()
-                meta_train_error += evaluation_error.item()
+            predictions = learner(X_query).squeeze()
+            evaluation_error = self.loss_fn(predictions, y_query)
+            evaluation_error.backward()
+            meta_train_error += evaluation_error.item()
 
-                predictions_all.append(predictions.detach().cpu())
-                targets_all.append(y_query.detach().cpu())
+            predictions_all.append(predictions.detach().cpu())
+            targets_all.append(y_query.detach().cpu())
 
         # Update model if there were tasks in the batch
         if len(predictions_all) > 0:
