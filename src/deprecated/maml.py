@@ -9,7 +9,8 @@ from torch.utils.data import DataLoader
 
 import src.models.maml_helpers_l2l as maml_helpers_l2l
 import wandb
-from src.helper_function import metalearning_binary_target_changer, set_learning_rate
+from src.data.helper_functions import metalearning_binary_target_changer
+from src.models.helper_functions import set_learning_rate
 from src.scoring.metalearning_scoring_fn import compute_metrics
 
 

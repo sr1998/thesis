@@ -232,15 +232,15 @@
 from copy import deepcopy
 
 from loguru import logger
-from torch import nn, no_grad, zeros_like
-from torch import device as torch_device
 from torch import cat as torch_cat
+from torch import device as torch_device
+from torch import nn, no_grad, zeros_like
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import SGD, Adam, Optimizer
 from torch.utils.data import DataLoader
 
 import wandb
-from src.helper_function import metalearning_binary_target_changer
+from src.data.helper_functions import metalearning_binary_target_changer
 from src.scoring.metalearning_scoring_fn import compute_metrics
 
 
@@ -314,7 +314,6 @@ class Reptile:  # Assumes binary classifier for now
                 inner_optimizer.zero_grad()
                 lr /= self.inner_rl_reduction_factor
                 self._set_learning_rate(inner_optimizer, lr)
-                
 
             copied_model.eval()
             with no_grad():
@@ -435,8 +434,7 @@ class Reptile:  # Assumes binary classifier for now
                     inner_optimizer.zero_grad()
                     lr /= self.inner_rl_reduction_factor
                     self._set_learning_rate(inner_optimizer, lr)
-                    
-                
+
                 # Get metrics after last step
                 with no_grad():
                     outputs = copied_model(X).squeeze()
