@@ -33,7 +33,7 @@ from src.helper_function import (
 
 def main(
     datasource: str,
-    model_name: str,  # possible values: RandomForestClassifier, XGBoost, NeuralNet, BalancedRandomForestClassifier
+    algorithm: str,  # possible values: RandomForestClassifier, XGBoost, NeuralNet, BalancedRandomForestClassifier
     study: str | list[str],
     abundance_file: str | Path,  # for sun et al. data for now
     metadata_file: str | Path,  # for sun et al. data for now
@@ -45,7 +45,7 @@ def main(
     positive_class_label: str | None = None,
     metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
-    save_model=True,
+    save_model=False,
 ):
     """Run the pipeline for the given study accessions and model name.
 
@@ -86,7 +86,7 @@ def main(
     config_script = "run_configs.predetermined_data_splits"
     config_module = import_module(config_script)
     setup = config_module.get_setup(
-        model_name,
+        algorithm,
         with_oversampling=True if balanced_or_unbalanced == "balanced" else False,
     )
     (
@@ -105,8 +105,10 @@ def main(
     ) = setup.values()
 
     job_id = os.getenv("SLURM_JOB_ID")
+    array_job_id = os.getenv("SLURM_ARRAY_JOB_ID")
+    array_task_id = os.getenv("SLURM_ARRAY_TASK_ID")
     setup["datasource"] = datasource
-    setup["model_name"] = model_name
+    setup["model_name"] = algorithm
     setup["study"] = study
     setup["abundance_file"] = abundance_file
     setup["metadata_file"] = metadata_file
@@ -121,8 +123,10 @@ def main(
     setup["positive_class_label"] = positive_class_label
     setup["metdata_cols_to_use_as_features"] = metadata_cols_to_use_as_features
     setup["job_id"] = job_id
+    setup["array_job_id"] = array_job_id
+    setup["array_task_id"] = array_task_id
 
-    wandb_name = f"w_{datasource}__d_{study}__m_{model_name}__{balanced_or_unbalanced}"
+    wandb_name = f"w_{datasource}__d_{study}__m_{algorithm}__{train_k_shot}shot__{balanced_or_unbalanced}"
     wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
 
     # get misc config parameters
@@ -143,7 +147,7 @@ def main(
 
     wandb_base_tags = [
         str(datasource),
-        model_name,
+        algorithm,
         balanced_or_unbalanced,
         tax_level,
         str(study),

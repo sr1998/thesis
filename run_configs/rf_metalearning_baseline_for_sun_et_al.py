@@ -1,4 +1,7 @@
+from functools import partial
 import os
+
+from imblearn.ensemble import BalancedRandomForestClassifier
 from loguru import logger
 from sklearn.calibration import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
@@ -8,8 +11,11 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import ShuffleSplit
+from xgboost import XGBClassifier
 
+import run_configs.optuna_search_space_samplers as sss
 from src.helper_function import create_pipeline
+from src.models.neural_net import NeuralNetWrapper
 
 # studies interested in:
 # HanL_2021
@@ -19,12 +25,12 @@ from src.helper_function import create_pipeline
 # ZengQ_2021
 
 
-def get_setup():
+def get_setup(algorithm):
     misc_config = {
         "wandb": True,  # whether to use wandb or not
         "wandb_params": {
             "project": "thesis_metalearning_inspired_baselines",
-            "group": "RF",  # model name can be useful here
+            "group": algorithm,  # model name can be useful here
         },
         "verbose_pipeline": True,  # whether to print verbose output from the pipeline
         "cache_pipeline_steps": False,  # True giving errors
@@ -35,11 +41,20 @@ def get_setup():
     tuning_num_samples = 50
 
     label_preprocessor = LabelEncoder()
-    n_cpus = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
+
+    n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
     logger.info(f"n_cpus found:{n_cpus}")
+
+    model = {
+        "RandomForestClassifier": RandomForestClassifier(n_jobs=n_cpus),
+        "XGBoost": XGBClassifier(n_jobs=n_cpus),
+        "NeuralNet": NeuralNetWrapper(),
+        "BalancedRandomForestClassifier": BalancedRandomForestClassifier(n_jobs=n_cpus),
+    }[algorithm]
+
     standard_pipeline = create_pipeline(
         [
-            ("model", RandomForestClassifier(n_jobs=n_cpus)),
+            ("model", model),
         ],
         misc_config,
     )
@@ -69,32 +84,16 @@ def get_setup():
     best_fit_scorer = "f1"
     tuning_mode = "maximize"  # "maximize" or "minimize"
 
-    def search_space_sampler(optuna_trial):
-        model__n_estimators = optuna_trial.suggest_int("model__n_estimators", 10, 500)
-        model__max_depth = optuna_trial.suggest_int("model__max_depth", 10, 200)
-        model__criterion = optuna_trial.suggest_categorical(
-            "model__criterion", ["gini", "entropy"]
-        )
-        model__class_weight = optuna_trial.suggest_categorical(
-            "model__class_weight", ["balanced", None]
-        )
-        model__bootstrap = optuna_trial.suggest_categorical(
-            "model__bootstrap", [False, True]
-        )
-        model__oob_score = optuna_trial.suggest_categorical(
-            "model__oob_score", [False, best_fit_scorer]
-        )
-
-        return {
-            # "preprocessor__feature_space_change__percentile": preprocessor__feature_space_change__percentile,
-            # "preprocessor__feature_space_change__n_neighbors": preprocessor__feature_space_change__n_neighbors,
-            "model__n_estimators": model__n_estimators,
-            "model__max_depth": model__max_depth,
-            "model__criterion": model__criterion,
-            "model__class_weight": model__class_weight,
-            "model__bootstrap": model__bootstrap,
-            "model__oob_score": model__oob_score,
-        }
+    search_space_sampler = {
+        "NeuralNet": sss.nn_search_space_sampler,
+        "RandomForestClassifier": partial(
+            sss.rf_search_space_sampler, best_fit_scorer=best_fit_scorer
+        ),
+        "XGBoost": sss.xgboost_search_space_sampler,
+        "BalancedRandomForestClassifier": partial(
+            sss.rf_search_space_sampler, best_fit_scorer=best_fit_scorer
+        ),
+    }[algorithm]
 
     return {
         "misc_config": misc_config,

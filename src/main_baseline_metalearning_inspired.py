@@ -24,22 +24,23 @@ from src.helper_function import (
     df_str_for_loguru,
     encode_labels,
     extend_train_with_support_set_from_eval,
+    get_cluster_save_directory,
     get_pipeline,
     get_run_dir_for_experiment,
     get_scores,
     hyp_param_eval_for_baseline_metalearning,
+    make_data_balanced_per_study,
 )
 
 
 def main(
     datasource: str,
-    config_script: str,
-    *,
-    test_study: str | list[str],
+    algorithm: str,
     abundance_file: str | Path,  # for sun et al. data for now
     metadata_file: str | Path,  # for sun et al. data for now
+    test_study: str | list[str],
+    balanced_or_unbalanced: str,
     train_k_shot: int,
-    balanced_or_unbalanced: str = "balanced",
     positive_class_label: str | None = None,
     metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
@@ -47,8 +48,9 @@ def main(
     save_model: bool = False,
 ):
     """Run the baseline pipeline for the baseline meta-learning inspired approach."""
+    config_script = "run_configs.rf_metalearning_baseline_for_sun_et_al"
     config_module = import_module(config_script)
-    setup = config_module.get_setup()
+    setup = config_module.get_setup(algorithm)
     (
         misc_config,
         n_outer_splits,
@@ -61,54 +63,6 @@ def main(
         search_space_sampler,
         tuning_num_samples,
     ) = setup.values()
-
-    setup["datasource"] = datasource
-    setup["test_study"] = test_study
-    # setup["val_study"] = val_study
-    setup["abundance_file"] = abundance_file
-    setup["metadata_file"] = metadata_file
-    tax_level = abundance_file.split("_")[1]
-    setup["tax_level"] = tax_level
-    setup["model"] = standard_pipeline.named_steps["model"].__class__.__name__
-    setup["positive_class_label"] = positive_class_label
-    setup["metdata_cols_to_use_as_features"] = metadata_cols_to_use_as_features
-    setup["balanced_or_unbalanced"] = balanced_or_unbalanced
-    setup["train_k_shot"] = train_k_shot
-
-    job_id = os.getenv("SLURM_JOB_ID")
-    wandb_name = f"w_{datasource}__TS{test_study}_J{job_id}_T{tax_level}_EK{train_k_shot}"  # _VS{val_study}
-
-    # get misc config parameters
-    use_wandb = misc_config["wandb"]
-    misc_config["wandb_params"]["name"] = (
-        wandb_name  # Not nice to change the config like this, better to use name directly
-    )
-    wandb_params = misc_config["wandb_params"]
-    verbose_pipeline = misc_config.get("verbose_pipeline", True)
-
-    run_dir = get_run_dir_for_experiment(misc_config)
-
-    # Set up file logging
-    logger_path = run_dir / "log.log"
-    logger.add(logger_path, colorize=True, level="DEBUG")
-    logger.info("Setting up everything")
-
-    wandb_base_tags = [
-        "t_s" + str(test_study),
-        "w_" + datasource,
-        # "v_s" + str(val_study),
-        "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
-        "tax_" + tax_level,
-        "t_k" + str(train_k_shot),
-        balanced_or_unbalanced,
-    ]
-
-    if datasource == "sun et al":
-        wandb_base_tags.append("w_sun_et_al")
-    else:
-        raise ValueError("Invalid value for 'what'")
-
-    logger.success("wandb init done")
 
     # Load data
     if datasource == "sun et al":
@@ -148,6 +102,10 @@ def main(
             n_inner_splits=n_inner_splits,
         )
 
+        # order the data by the index of the metadata
+        train_data = train_data.loc[train_metadata.index]
+        test_data = test_data.loc[test_metadata.index]
+
         train_metadata["Group"] = encode_labels(
             label_preprocessor, train_metadata["Group"], positive_class_label
         )
@@ -158,6 +116,55 @@ def main(
         raise ValueError("Invalid value for 'datasource'")
 
     logger.success("Data obtained")
+
+    job_id = os.getenv("SLURM_JOB_ID")
+    array_job_id = os.getenv("SLURM_ARRAY_JOB_ID")
+    array_task_id = os.getenv("SLURM_ARRAY_TASK_ID")
+    setup["datasource"] = datasource
+    setup["test_study"] = test_study
+    # setup["val_study"] = val_study
+    setup["abundance_file"] = abundance_file
+    setup["metadata_file"] = metadata_file
+    tax_level = abundance_file.split("_")[1]
+    setup["tax_level"] = tax_level
+    setup["model"] = standard_pipeline.named_steps["model"].__class__.__name__
+    setup["positive_class_label"] = positive_class_label
+    setup["metdata_cols_to_use_as_features"] = metadata_cols_to_use_as_features
+    setup["balanced_or_unbalanced"] = balanced_or_unbalanced
+    setup["train_k_shot"] = train_k_shot
+    setup["job_id"] = job_id
+    setup["array_job_id"] = array_job_id
+    setup["array_task_id"] = array_task_id
+
+
+    wandb_name = f"{datasource}_TS{test_study}_{algorithm}_T{tax_level}_{train_k_shot}shot_{balanced_or_unbalanced}"  # _VS{val_study}
+
+    # get misc config parameters
+    use_wandb = misc_config["wandb"]
+    misc_config["wandb_params"]["name"] = (
+        wandb_name  # Not nice to change the config like this, better to use name directly
+    )
+    wandb_params = misc_config["wandb_params"]
+    verbose_pipeline = misc_config.get("verbose_pipeline", True)
+
+    run_dir = get_run_dir_for_experiment(misc_config)
+    model_save_dir = get_cluster_save_directory(misc_config) or run_dir
+
+    # Set up file logging
+    logger_path = run_dir / "log.log"
+    logger.add(logger_path, colorize=True, level="DEBUG")
+    logger.info("Setting up everything")
+
+    wandb_base_tags = [
+        str(test_study),
+        datasource,
+        algorithm,
+        tax_level,
+        str(train_k_shot) + "shot",
+        balanced_or_unbalanced,
+    ]
+
+    logger.success("wandb init done")
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -180,7 +187,6 @@ def main(
 
     train_scores = []
     test_scores = []
-    # split_config = []
 
     # split_permutation_importance = pd.DataFrame()
     split_rf_importance_df = pd.DataFrame()
@@ -195,6 +201,7 @@ def main(
             val_loop_data_selection,
             train_data,
             train_metadata,
+            balanced_or_unbalanced,
             standard_pipeline,
             scoring,
             best_fit_scorer,
@@ -208,16 +215,24 @@ def main(
         # outer cv data split (done here, as we need to extend the train data with the support set)
         (
             train_data_extended,
-            train_labels_extended,
+            train_metadata_extended,
             test_query_data,
-            test_query_labels,
+            test_query_metadata,
         ) = extend_train_with_support_set_from_eval(
             train_data,
-            train_metadata["Group"],
+            train_metadata,
             test_data,
-            test_metadata["Group"],
+            test_metadata,
             test_support_set,
         )
+
+        if balanced_or_unbalanced == "balanced":
+            # We give metadata but get labels back
+            train_data_extended, train_labels_extended = make_data_balanced_per_study(train_data_extended, train_metadata_extended)
+        else:
+            train_labels_extended = train_metadata_extended["Group"]
+
+        test_query_labels = test_query_metadata["Group"]
 
         best_trial = optuna_study.best_trial
         # save best trial parameters + split for this loop
@@ -339,10 +354,10 @@ def main(
     # )
 
     # Save RF feature importance
-    feature_importance_path = (
-        run_dir / "feature_importance.csv"
-    )
-    split_rf_importance_df.to_csv(feature_importance_path, index=False)
+    # feature_importance_path = (
+    #     run_dir / "feature_importance.csv"
+    # )
+    # split_rf_importance_df.to_csv(feature_importance_path, index=False)
     wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
 
     # mean and std of importance of outer runs
@@ -364,10 +379,10 @@ def main(
             )
         }
     )
-    importance_summary_path = (
-        run_dir / "feature_importance_summary.csv"
-    )
-    rf_importance_summary_df.to_csv(importance_summary_path, index=False)
+    # importance_summary_path = (
+    #     run_dir / "feature_importance_summary.csv"
+    # )
+    # rf_importance_summary_df.to_csv(importance_summary_path, index=False)
 
     logger.success("Done!")
     wandb.finish()
@@ -378,10 +393,10 @@ if __name__ == "__main__":
 
     # main(
     #     datasource="sun et al",
-    #     config_script="run_configs.rf_metalearning_baseline_for_sun_et_al",
-    #     test_study="LiJ_2017",
+    #     algorithm="RandomForestClassifier",
     #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
+    #     test_study="LiJ_2017",
     #     train_k_shot=10,
     #     balanced_or_unbalanced="balanced",
     #     positive_class_label="Disease",

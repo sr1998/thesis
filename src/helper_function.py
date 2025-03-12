@@ -269,9 +269,6 @@ def hyp_param_eval_with_cv(
     """Evaluate the hyperparameters with cross-validation for a given dataset and pipeline with the given search space sampler."""
     pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial)
 
-    logger.info("pipeline:")
-    print(pipeline)
-
     cross_val_results = cross_validate(
         pipeline,
         data,
@@ -357,6 +354,7 @@ def hyp_param_eval_for_baseline_metalearning(
     inner_loop_splits: dict[int, list[str | list[str]]],
     orig_train_data: pd.DataFrame,
     orig_train_metadata: pd.DataFrame,
+    balanced_or_unbalanced,
     standard_pipeline,
     scoring,
     best_fit_scorer,
@@ -384,16 +382,24 @@ def hyp_param_eval_for_baseline_metalearning(
 
         (
             train_data,
-            train_labels,
+            train_metadata,
             val_data,
-            val_labels,
+            val_metadata,
         ) = extend_train_with_support_set_from_eval(
             train_data,
-            train_metadata["Group"],
+            train_metadata,
             val_data,
-            val_metadata["Group"],
+            val_metadata,
             val_support_sets,
         )
+
+        if balanced_or_unbalanced == "balanced":
+            # We give metadata but get labels back
+            train_data, train_labels = make_data_balanced_per_study(train_data, train_metadata)
+        else:
+            train_labels = train_metadata["Group"]
+
+        val_labels = val_metadata["Group"]
 
         train_res, val_res = cv_eval_for_baseline_metalearning(
             train_data, train_labels, val_data, val_labels, clone(pipeline), scoring
@@ -492,21 +498,61 @@ def encode_labels(
 
 def extend_train_with_support_set_from_eval(
     train_data: pd.DataFrame,
-    train_labels: pd.Series,
+    train_metadata: pd.Series,
     eval_data: pd.DataFrame,
-    eval_labels: pd.Series,
+    eval_metadata: pd.Series,
     eval_support_indices: list[object],
 ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
     """Extend the training data with the support data from the evaluation data."""
     train_data = pd.concat([train_data, eval_data.loc[eval_support_indices]])
-    train_labels = pd.concat([train_labels, eval_labels.loc[eval_support_indices]])
-    train_labels = train_labels.loc[train_data.index]
+    train_metadata = pd.concat([train_metadata, eval_metadata.loc[eval_support_indices]])
+    train_metadata = train_metadata.loc[train_data.index]
 
     eval_data = eval_data.drop(eval_support_indices)
-    eval_labels = eval_labels.drop(eval_support_indices)
-    eval_labels = eval_labels.loc[eval_data.index]
+    eval_metadata = eval_metadata.drop(eval_support_indices)
+    eval_metadata = eval_metadata.loc[eval_data.index]
 
-    return train_data, train_labels, eval_data, eval_labels
+    return train_data, train_metadata, eval_data, eval_metadata
+
+
+def make_data_balanced_per_study(train_data, train_metadata, method="SMOTE"):
+    """Make the data balanced per study by applying SMOTE or any other method.
+
+    Args:
+        train_data: The training data.
+        train_metadata: The metadata for the training data.
+        method: The method to use for balancing the data. Default is "SMOTE".
+
+    Returns:
+        A tuple containing the balanced training data and the corresponding labels.
+        Although metadata is passed, labels are returned.
+    """
+    grouped_per_study = train_metadata.groupby("Project_1")
+    train_labels = train_metadata["Group"]
+    balanced_data = []
+    balanced_labels = []
+    
+    for study_name, idx in grouped_per_study.groups.items():
+        study_data = train_data.loc[idx]
+        study_labels = train_labels.loc[idx]
+
+        # Apply SMOTE or any other method to balance the data
+        if method == "SMOTE":
+            from imblearn.over_sampling import SMOTE
+
+            smote = SMOTE()
+            study_data, study_labels = smote.fit_resample(study_data, study_labels)
+
+        balanced_data.append(study_data)
+        balanced_labels.append(study_labels)
+    
+    # Concatenate the balanced data and labels and shuffle
+    balanced_data = pd.concat(balanced_data)
+    balanced_labels = pd.concat(balanced_labels)
+    balanced_data = balanced_data.sample(frac=1, random_state=42).reset_index(drop=True)
+    balanced_labels = balanced_labels.sample(frac=1, random_state=42).reset_index(drop=True)
+
+    return balanced_data, balanced_labels
 
 
 def optuna_wandb_callback(study, trial, outer_cv_step: int | None = None):

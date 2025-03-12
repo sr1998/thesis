@@ -7,10 +7,10 @@
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
 #SBATCH --cpus-per-task=10         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem=2GB                  # Request ... GB of RAM in total
+#SBATCH --mem-per-cpu=2GB                  # Request ... GB of RAM in total
 #SBATCH --gpus-per-task=0
 
-
+ALGORITHM="BalancedRandomForestClassifier"
 STUDIES=(
     'ChenB_2020' 'ChuY_2021' 'HeQ_2017' 'HuY_2019'
     'HuangR_2020' 'LiJ_2017' 'LiR_2021'
@@ -25,17 +25,15 @@ STUDIES=(
 )
 # 31
 
-# STUDIES=('JieZ_2017' 'WangQ_2021' 'ZengQ_2021' 'HanL_2021')
-# STUDIES=('QinJ_2012') 3:30
-
 TEST_STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
-mkdir "slurm_logs/${SLURM_JOB_NAME}/${TEST_STUDY}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${MODEL_NAME}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${MODEL_NAME}/${TEST_STUDY}"
 
+LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${MODEL_NAME}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.out"
+ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${MODEL_NAME}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.err"
 
-LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.out"
-ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.err"
 
 # Redirect stdout and stderr to these files
 exec > "$LOG_FILE" 2> "$ERR_FILE"
@@ -68,7 +66,7 @@ srun apptainer exec \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_baseline_metalearning_inspired \
     --datasource "sun et al" \
-    --config_script "run_configs.rf_metalearning_baseline_for_sun_et_al" \
+    --algorithm "$ALGORITHM" \
     --test_study "$TEST_STUDY" \
     --abundance_file "mpa4_species_profile_preprocessed.csv" \
     --metadata_file "sample_group_species_preprocessed.csv" \
