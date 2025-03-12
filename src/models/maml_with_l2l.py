@@ -48,6 +48,7 @@ class MAML:
         self.weight_decay = weight_decay
 
         self.maml = maml_helpers_l2l.MAML(self.model, lr=self.inner_lr)
+        self.maml.to(self.device)
         self.outer_optimizer = None
         self.current_epoch = 0
 
@@ -74,6 +75,7 @@ class MAML:
         predictions_all = []
         targets_all = []
 
+        self.maml.train()
         self.outer_optimizer.zero_grad()
 
         # Process each task in the batch
@@ -107,13 +109,14 @@ class MAML:
             )
 
             # Make predictions and compute loss
-            predictions = learner(X_query).squeeze()
-            evaluation_error = self.loss_fn(predictions, y_query)
-            evaluation_error.backward()
-            meta_train_error += evaluation_error.item()
+            with no_grad():
+                predictions = learner(X_query).squeeze()
+                evaluation_error = self.loss_fn(predictions, y_query)
+                evaluation_error.backward()
+                meta_train_error += evaluation_error.item()
 
-            predictions_all.append(predictions.detach().cpu())
-            targets_all.append(y_query.detach().cpu())
+                predictions_all.append(predictions.detach().cpu())
+                targets_all.append(y_query.detach().cpu())
 
         # Update model if there were tasks in the batch
         if len(predictions_all) > 0:
@@ -144,6 +147,8 @@ class MAML:
         meta_test_error = 0.0
         predictions_all = []
         targets_all = []
+
+        self.maml.train()
 
         # Process each task in the batch
         for X, y in batch:
@@ -207,7 +212,7 @@ class MAML:
         save_best_model_path: str = None,
     ):
         """Full training loop with optional early stopping"""
-        self.model.train()
+        self.maml.train()
         self.initialize_optimizer()
         score_name_prefix = score_name_prefix + "." if score_name_prefix else ""
 
@@ -310,7 +315,6 @@ class MAML:
         log_step: int = None,
     ):
         """Evaluate the model on the entire validation dataset"""
-        self.model.eval()
 
         all_batches = list(dataloader)
         results = self.evaluate_step(all_batches)
@@ -337,5 +341,5 @@ class MAML:
                 + f"ROC-AUC = {results['roc_auc']:.2f}"
             )
 
-        self.model.train()
+        self.maml.train()
         return results

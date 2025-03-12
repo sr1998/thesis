@@ -92,6 +92,8 @@ class Reptile:  # Assumes binary classifier for now
         task_adapted_params = []
         num_tasks_processed = 0
 
+        self.model.train()
+
         # Process each task in the batch
         for task_idx in range(n_parallel_tasks):
             try:
@@ -119,7 +121,7 @@ class Reptile:  # Assumes binary classifier for now
                 inner_optimizer,
                 self.train_n_gradient_steps,
                 initial_lr=self.inner_lr,
-                inner_rl_reduction_factor=self.inner_lr_reduction_factor,
+                inner_lr_reduction_factor=self.inner_lr_reduction_factor,
             )
 
             # Store the adapted parameters for this task
@@ -201,6 +203,7 @@ class Reptile:  # Assumes binary classifier for now
         # as recommended in the Reptile paper
         original_optimizer_state = deepcopy(self.inner_optimizer_state)
 
+        self.model.train()
         # Process each task in the batch
         for X, y in batch:
             # Prep data
@@ -270,7 +273,6 @@ class Reptile:  # Assumes binary classifier for now
         log_step: int = None,
     ):
         """Evaluate the model on the entire validation dataset"""
-        self.model.eval()
 
         all_batches = list(dataloader)
         results = self.evaluate_step(all_batches)

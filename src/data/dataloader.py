@@ -304,7 +304,7 @@ def get_cross_validation_sun_et_al_data_splits(
     n_outer_splits: int,
     n_inner_splits: int,
     save_splits: bool = True,
-) -> tuple[dict[int, list[str]], dict[int, list[str | list[str]]]]:
+) -> tuple[dict[int, list[str]], dict[int, list[str | list[str]]], pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Get the "cross validation data splits" for the Sun et al. dataset.
 
     This is reproducible as the random number generator is seeded based on hashing the test_study.

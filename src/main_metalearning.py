@@ -112,6 +112,8 @@ def main(
             n_outer_splits=n_outer_splits,
             n_inner_splits=n_inner_splits,
         )
+    else:
+        raise ValueError("Datasource not recognized.")
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # Set up file logging
@@ -121,6 +123,8 @@ def main(
 
     # Set up wandb
     job_id = os.getenv("SLURM_JOB_ID")
+    array_job_id = os.getenv("SLURM_ARRAY_JOB_ID")
+    array_task_id = os.getenv("SLURM_ARRAY_TASK_ID")
     tax_level = abundance_file.split("_")[1]
     config = {
         # "model_name": model_name,
@@ -145,7 +149,6 @@ def main(
         "loss_fn": loss_fn,
         "use_wandb": use_wandb,
         "device": device,
-        "job_id": job_id,
         "features_to_use": features_to_use,
         # "model_script": model_script,
         "n_outer_splits": n_outer_splits,
@@ -153,16 +156,18 @@ def main(
         "tuning_mode": tuning_mode,
         "best_fit_scorer": best_fit_scorer,
         "tuning_num_samples": tuning_num_samples,
-        "search_space_sampler": search_space_sampler,
+        # "search_space_sampler": search_space_sampler,
+        "job_id": job_id,
+        "array_job_id": array_job_id,
+        "array_task_id": array_task_id,
+        
     }
     wandb_base_tags = [
-        "t_s" + str(test_study),
-        # "v_s" + str(val_study),
-        # "m_" + model_name,
-        "a_" + algorithm,
-        "tax_" + tax_level,
-        "t_k" + str(train_k_shot),
-        "w_" + datasource,
+        str(test_study),
+        algorithm,
+        tax_level,
+        str(train_k_shot) + "_shot",
+        datasource,
         balanced_or_unbalanced,
         # "e_k" + str(eval_k_shot),
     ]
@@ -177,6 +182,7 @@ def main(
             project="meta-learning",
             name=wandb_name,
             config=config,
+            notes=str(config),
             group=algorithm,
             tags=wandb_base_tags,
         )
@@ -185,6 +191,7 @@ def main(
             name=wandb_name,
             mode="disabled",
             config=config,
+            notes=str(config),
             project="meta-learning",
             group=algorithm,
             tags=wandb_base_tags,
