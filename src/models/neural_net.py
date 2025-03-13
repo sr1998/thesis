@@ -78,8 +78,12 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
             self.model.train()
             for X_batch, y_batch in dataloader:
                 optimizer.zero_grad()
-                logits = self.model(X_batch)
-                loss = loss_fn(logits.squeeze(), y_batch)
+                logits = self.model(X_batch).squeeze()
+                y_batch_reshaped = y_batch
+                if logits.dim() == 0:
+                    logits = logits.unsqueeze(0)  # Add a dimension to make it [1]
+                    y_batch_reshaped = y_batch.unsqueeze(0)  # Also reshape labels
+                loss = loss_fn(logits, y_batch_reshaped)
                 loss.backward()
                 optimizer.step()
 
@@ -107,7 +111,7 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
                 if probs.shape:
                     all_probs.extend(probs.cpu().numpy().tolist())
                 else:
-                    all_probs.append(probs.cpu().numpy().item())
+                    all_probs.append(probs.item())
 
         # Format as scikit-learn compatible 2D array with columns [prob_class_0, prob_class_1]
         all_probs = np.array(all_probs)
