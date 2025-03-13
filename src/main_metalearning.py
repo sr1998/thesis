@@ -180,7 +180,7 @@ def main(
     # Initialize wandb if enabled
     if use_wandb:
         wandb.init(
-            project="meta-learning",
+            project="metalearning",
             name=wandb_name,
             config=config,
             notes=str(config),
@@ -193,7 +193,7 @@ def main(
             mode="disabled",
             config=config,
             notes=str(config),
-            project="meta-learning",
+            project="metalearning",
             group=algorithm,
             tags=wandb_base_tags,
         )

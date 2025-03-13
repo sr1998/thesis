@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --job-name="sun_et_al_baseline_predetermined_data_splits"
+#SBATCH --job-name="baseline_predetermined_data_splits"
 #SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
 #SBATCH --time=1:30:00            # Request run time (wall-clock). Default is 1 minute
@@ -10,15 +10,16 @@
 #SBATCH --mem=1GB                  # Request ... GB of RAM in total
 #SBATCH --gpus-per-task=0
 
-
+ALGORITHM="RandomForestClassifier" # "RandomForestClassifier" or "BalancedRandomForestClassifier" or "XGBoost" or "NeuralNet"
+BALANCED_OR_UNBALANCED="balanced" # or "unbalanced"
 STUDIES=(
-    'ChenB_2020' 'ChuY_2021' 'HeQ_2017' 'HuY_2019'
-    'HuangR_2020' 'LiJ_2017' 'LiR_2021'
+    'ChenB_2020' 'YeZ_2018' 'ChuY_2021' 'ZhouC_2020' 'YeohYK_2021'
+    'HeQ_2017' 'HuY_2019' 'HuangR_2020' 'LiJ_2017' 'LiR_2021'
     'LiuP_2021' 'LiuR_2017' 'LuW_2018' 'MaoL_2021'
     'QiX_2019' 'QianY_2020' 'QinN_2014' 'WanY_2021'
     'WangM_2019' 'WangX_2020' 'WengY_2019' 'YanQ_2017'
-    'YangY_2021' 'YeZ_2018' 'YeZ_2020' 'YeohYK_2021' 'YuJ_2017'
-    'ZhangX_2015' 'ZhongH_2019' 'ZhouC_2020' 'ZhuF_2020'
+    'YangY_2021' 'YeZ_2020' 'YuJ_2017'
+    'ZhangX_2015' 'ZhongH_2019' 'ZhuF_2020'
     'ZhuJ_2018' 'ZhuQ_2021' 'ZuoK_2019'
     'JieZ_2017' 'WangQ_2021' 'ZengQ_2021' 'HanL_2021'
     'QinJ_2012'
@@ -27,10 +28,11 @@ STUDIES=(
 STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
-mkdir "slurm_logs/${SLURM_JOB_NAME}/${STUDY}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${STUDY}"
 
-LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.out"
-ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.err"
+LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.out"
+ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${STUDY}.err"
 
 # Redirect stdout and stderr to these files
 exec > "$LOG_FILE" 2> "$ERR_FILE"
@@ -59,17 +61,19 @@ export SSL_CERT_FILE=./cacert.pem
 # Note: There cannot be any characters incuding space behind the `\` symbol.
 srun apptainer exec \
     -B $HOME:$HOME \
+    -B /tudelft.net/staff-umbrella/abeellabstudents/sramezani:/tudelft.net/staff-umbrella/abeellabstudents/sramezani \
     --env-file $HOME/.env \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_baseline_with_predetermined_data_splits \
-    --balanced_or_unbalanced "unbalanced" \
-    --model_name "RandomForestClassifier" \
+    --balanced_or_unbalanced "$BALANCED_OR_UNBALANCED" \
+    --algorithm "$ALGORITHM" \
     --datasource "sun et al" \
     --study "$STUDY" \
     --abundance_file "mpa4_species_profile_preprocessed.csv" \
     --metadata_file "sample_group_species_preprocessed.csv" \
     --train_k_shot 10 \
     --positive_class_label "Disease" \
+    --save_model False
 
 # srun apptainer exec \
 #     -B $HOME:$HOME \

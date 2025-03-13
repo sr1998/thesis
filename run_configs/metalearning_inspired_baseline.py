@@ -31,7 +31,7 @@ def get_setup(algorithm):
     misc_config = {
         "wandb": True,  # whether to use wandb or not
         "wandb_params": {
-            "project": "thesis_metalearning_inspired_baselines",
+            "project": "baseline_metalearning_inspired",
             "group": algorithm,  # model name can be useful here
         },
         "verbose_pipeline": True,  # whether to print verbose output from the pipeline

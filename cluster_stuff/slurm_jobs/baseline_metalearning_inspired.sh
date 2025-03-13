@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --job-name="sun_et_al_metalearning_inspired_baseline"
+#SBATCH --job-name="baseline_metalearning_inspired"
 #SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
 #SBATCH --time=4:00:00            # Request run time (wall-clock). Default is 1 minute
@@ -8,17 +8,18 @@
 #SBATCH --ntasks-per-node=1       # Set one task per node
 #SBATCH --cpus-per-task=10         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
 #SBATCH --mem-per-cpu=2GB                  # Request ... GB of RAM in total
-#SBATCH --gpus-per-task=0
+#SBATCH --gres=gpu:0        # Request 1 GPU (A40) per node
 
+BALANCED_OR_UNBALANCED="balanced" # or "unbalanced"
 ALGORITHM="BalancedRandomForestClassifier"
 STUDIES=(
-    'ChenB_2020' 'ChuY_2021' 'HeQ_2017' 'HuY_2019'
-    'HuangR_2020' 'LiJ_2017' 'LiR_2021'
+    'ChenB_2020' 'YeZ_2018' 'ChuY_2021' 'ZhouC_2020' 'YeohYK_2021'
+    'HeQ_2017' 'HuY_2019' 'HuangR_2020' 'LiJ_2017' 'LiR_2021'
     'LiuP_2021' 'LiuR_2017' 'LuW_2018' 'MaoL_2021'
     'QiX_2019' 'QianY_2020' 'QinN_2014' 'WanY_2021'
     'WangM_2019' 'WangX_2020' 'WengY_2019' 'YanQ_2017'
-    'YangY_2021' 'YeZ_2018' 'YeZ_2020' 'YeohYK_2021' 'YuJ_2017'
-    'ZhangX_2015' 'ZhongH_2019' 'ZhouC_2020' 'ZhuF_2020'
+    'YangY_2021' 'YeZ_2020' 'YuJ_2017'
+    'ZhangX_2015' 'ZhongH_2019' 'ZhuF_2020'
     'ZhuJ_2018' 'ZhuQ_2021' 'ZuoK_2019'
     'JieZ_2017' 'WangQ_2021' 'ZengQ_2021' 'HanL_2021'
     'QinJ_2012'
@@ -62,16 +63,17 @@ export SSL_CERT_FILE=./cacert.pem
 # Note: There cannot be any characters incuding space behind the `\` symbol.
 srun apptainer exec \
     -B $HOME:$HOME \
+    -B /tudelft.net/staff-umbrella/abeellabstudents/sramezani:/tudelft.net/staff-umbrella/abeellabstudents/sramezani \
     --env-file $HOME/.env \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_baseline_metalearning_inspired \
     --datasource "sun et al" \
     --algorithm "$ALGORITHM" \
+    --balanced_or_unbalanced "$BALANCED_OR_UNBALANCED" \
     --test_study "$TEST_STUDY" \
     --abundance_file "mpa4_species_profile_preprocessed.csv" \
     --metadata_file "sample_group_species_preprocessed.csv" \
     --train_k_shot 10 \
-    --balanced_or_unbalanced "balanced" \
     --positive_class_label "Disease" \
 
 # srun apptainer exec \
