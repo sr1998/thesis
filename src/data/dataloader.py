@@ -316,10 +316,10 @@ def get_cross_validation_sun_et_al_data_splits(
 
 
     """
-    # For now only unbalanced supported # TODO FIXME
-
-    # Reproducible based on test_study and k_shot
-    string_seed = sha256(f"{test_study}_{k_shot}".encode())
+    # Reproducible based on test_study and k_shot and 
+    data_hash = get_data_hash(abundance_data, metadata)
+    file_name = f"{k_shot}shot_{balanced_or_unbalanced}_nOuter{n_outer_splits}_nInner{n_inner_splits}_{test_study}_{data_hash[:8]}.yml"
+    string_seed = sha256(file_name.encode())
     string_seed = int.from_bytes(
         string_seed.digest()[:4], byteorder="little", signed=False
     )
@@ -345,10 +345,8 @@ def get_cross_validation_sun_et_al_data_splits(
     remaining_studies = [study for study in study_names if study != test_study]
 
     # Load the data splits if they exist
-    save_in = BASE_DATA_DIR / "sun_et_al_data" / "selected_data_splits"
-    os.makedirs(save_in, exist_ok=True)
-    data_hash = get_data_hash(abundance_data, metadata)
-    file_name = f"{test_study}_{k_shot}shot_{balanced_or_unbalanced}_nOuter{n_outer_splits}_nInner{n_inner_splits}_{data_hash[:8]}.yml"
+    save_in = BASE_DATA_DIR / "sun_et_al_data" / "selected_data_splits" / test_study
+    save_in.mkdir(exist_ok=True, parents=True)
     if os.path.exists(save_in / file_name):
         logger.info(f"Loading data splits from {save_in / file_name}")
         with open(save_in / file_name, "r") as f:

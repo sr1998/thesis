@@ -172,8 +172,8 @@ def hyp_param_val_for_metalearning(
             orig_train_metadata["Project_1"] == val_study_name
         ]
         val_data = orig_train_data.loc[val_metadata.index]
-        train_data = orig_train_data.drop(val_metadata.index)
-        train_metadata = orig_train_metadata.drop(val_metadata.index)
+        train_data = orig_train_data.drop(index=val_metadata.index)
+        train_metadata = orig_train_metadata.drop(index=val_metadata.index)
 
         trial_config = search_space_sampler(trial)
 

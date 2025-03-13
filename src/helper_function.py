@@ -575,3 +575,16 @@ def optuna_wandb_callback(study, trial, outer_cv_step: int | None = None):
 
     # Log everything using W&B's global step counter
     wandb.log({**trial_params, **metrics})
+
+
+def check_run_finished(project_name, run_name, entity_name="shayan000"):
+    api = wandb.Api()
+    runs = api.runs(f"{entity_name}/{project_name}", 
+                filters={"display_name": run_name})
+    
+    for run in runs:
+        if run.state == "finished":
+            print(f"Run '{run_name}' exists and is finished. Stopping script.")
+            exit(0)
+    
+    print(f"No finished run named '{run_name}' found. Continuing...")
