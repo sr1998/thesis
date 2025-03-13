@@ -78,12 +78,9 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
             self.model.train()
             for X_batch, y_batch in dataloader:
                 optimizer.zero_grad()
-                logits = self.model(X_batch).squeeze()
-                y_batch_reshaped = y_batch
-                if logits.dim() == 0:
-                    logits = logits.unsqueeze(0)  # Add a dimension to make it [1]
-                    y_batch_reshaped = y_batch.unsqueeze(0)  # Also reshape labels
-                loss = loss_fn(logits, y_batch_reshaped)
+                
+                logits = self.model(X_batch).view(-1)
+                loss = loss_fn(logits, y_batch.view(-1))
                 loss.backward()
                 optimizer.step()
 
