@@ -271,7 +271,6 @@ def hyp_param_eval_with_cv(
 ):
     """Evaluate the hyperparameters with cross-validation for a given dataset and pipeline with the given search space sampler."""
     pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial)
-    logger.info(f"Pipeline:\n{pipeline}")
 
     cross_val_results = cross_validate(
         pipeline,
