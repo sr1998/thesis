@@ -238,6 +238,9 @@ def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
             preprocessor__feature_space_change=preprocessor__feature_space_change
         )
 
+    if not trial_config.get("do_normalization_before_scaling"):
+        standard_pipeline.named_steps["normalizer"] = "passthrough"
+
     if "RandomForest" in standard_pipeline.named_steps["model"].__class__.__name__:
         if not trial_config.get("model__bootstrap", False):
             trial_config["model__oob_score"] = False
@@ -268,6 +271,7 @@ def hyp_param_eval_with_cv(
 ):
     """Evaluate the hyperparameters with cross-validation for a given dataset and pipeline with the given search space sampler."""
     pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial)
+    logger.info(f"Pipeline:\n{pipeline}")
 
     cross_val_results = cross_validate(
         pipeline,

@@ -43,7 +43,7 @@ def rf_search_space_sampler(optuna_trial, best_fit_scorer):
 
 
 def nn_search_space_sampler(optuna_trial):
-    scale_factor_before_training = optuna_trial.suggest_int("scale_factor_before_training", 1, 1000, step=100)
+    scale_factor_before_training = optuna_trial.suggest_int("scale_factor_before_training", 1, 1001, step=100)
 
     # model__n_epochs = optuna_trial.suggest_int("model__n_epochs", 1, 200)
     model__batch_size = optuna_trial.suggest_int("model__batch_size", 2, 32, step=2)
@@ -56,9 +56,9 @@ def nn_search_space_sampler(optuna_trial):
     # model__batch_norm = optuna_trial.suggest_categorical("model__batch_norm", [True, False])
     # model__activation = optuna_trial.suggest_categorical("model__activation", ["relu", "leaky_relu", "elu", "gelu", "selu"])
     base_size = optuna_trial.suggest_int(
-        "model__base_size", 16, 1024, step=32
+        "model__base_size", 16, 1008, step=32
     )  # Much smaller maximum
-    reduction_factor = optuna_trial.suggest_float("model__reduction_factor", 1.0, 3.0, step=0.2)
+    reduction_factor = optuna_trial.suggest_float("model__reduction_factor", 1.0, 3.0, step=0.5)
 
     # Dynamically generate layer sizes
     model__layer_sizes = []

@@ -1,6 +1,7 @@
 from functools import partial
 from imblearn.ensemble import BalancedRandomForestClassifier
 from imblearn.over_sampling import SMOTE
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.calibration import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
@@ -8,11 +9,13 @@ from sklearn.metrics import (
     make_scorer,
 )
 from sklearn.model_selection import ShuffleSplit
+from sklearn.preprocessing import Normalizer
 from xgboost import XGBClassifier
 
 import run_configs.optuna_search_space_samplers as sss
 from src.helper_function import create_pipeline
 from src.models.neural_net import NeuralNetWrapper
+from src.preprocessing.functions import ScaleTransformer
 
 
 def get_setup(model_name, with_oversampling=True):
@@ -71,6 +74,8 @@ def get_setup(model_name, with_oversampling=True):
 
     standard_pipeline = create_pipeline(
         [
+            ("normalizer", Normalizer() if model_name == "NeuralNet" else "passthrough"),
+            ("scaler", ScaleTransformer() if model_name == "NeuralNet" else "passthrough"),
             (
                 "sampler",
                 SMOTE(random_state=42) if with_oversampling else "passthrough",

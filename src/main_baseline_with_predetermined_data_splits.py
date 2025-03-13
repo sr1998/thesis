@@ -433,11 +433,11 @@ if __name__ == "__main__":
 
     # main(
     #     datasource="sun et al",
-    #     model_name="NeuralNet",
+    #     algorithm="NeuralNet",
     #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
-    #     study="ZhuQ_2021",
+    #     study="QinN_2014",
     #     train_k_shot=10,
-    #     balanced_or_unbalanced="unbalanced",
+    #     balanced_or_unbalanced="balanced",
     #     positive_class_label="Disease",
     # )

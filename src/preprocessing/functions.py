@@ -3,6 +3,19 @@ import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
 
 
+class ScaleTransformer(BaseEstimator, TransformerMixin):
+    def __init__(self, scale_factor=1.0):
+        self.scale_factor = scale_factor
+    
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X):
+        return X * self.scale_factor
+    
+    def fit_transform(self, X, y=None):
+        return self.transform(X)
+
 class NumpyReplace(TransformerMixin, BaseEstimator):
     def __init__(self, replace: int = None):
         self.replace = replace
