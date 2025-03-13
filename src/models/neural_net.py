@@ -104,7 +104,10 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
             for (X_batch,) in dataloader:
                 logits = self.model(X_batch).squeeze()
                 probs = sigmoid(logits)
-                all_probs.extend(probs.cpu().numpy().tolist() if probs.shape else [probs.cpu().numpy().item()])
+                if probs.shape:
+                    all_probs.extend(probs.cpu().numpy().tolist())
+                else:
+                    all_probs.append(probs.cpu().numpy().item())
 
         # Format as scikit-learn compatible 2D array with columns [prob_class_0, prob_class_1]
         all_probs = np.array(all_probs)
