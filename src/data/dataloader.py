@@ -304,22 +304,28 @@ def get_cross_validation_sun_et_al_data_splits(
     n_outer_splits: int,
     n_inner_splits: int,
     save_splits: bool = True,
-) -> tuple[dict[int, list[str]], dict[int, list[str | list[str]]], pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[
+    dict[int, list[str]],
+    dict[int, list[str | list[str]]],
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+]:
     """Get the "cross validation data splits" for the Sun et al. dataset.
 
-    This is reproducible as the random number generator is seeded based on hashing the test_study.
-
-    Returns:
-        tuple: test_loop_data_selection, val_loop_data_selection, train_data_df, train_metadata_df, test_data_df, test_metadata_df
-        test_loop_data_selection: A dictionary with the outer loop index as key and a list of test support set indices as value.
-        val_loop_data_selection: A dictionary with the inner loop index as key and a list of [val_study, val_support_set_indices] as value.
-
-
+    This is reproducible as the random number generator is seeded based on
+    hashing the test_study ONLY. This means:
+    - Outer splits remain consistent regardless of other parameters for the same loop iteration
+    - When increasing n_outer_splits, earlier splits remain identical
+    - Cached files are unique for each parameter combination
     """
-    # Reproducible based on test_study and k_shot and 
+    # Reproducible based on test_study and k_shot and
     data_hash = get_data_hash(abundance_data, metadata)
-    file_name = f"{k_shot}shot_{balanced_or_unbalanced}_nOuter{n_outer_splits}_nInner{n_inner_splits}_{test_study}_{data_hash[:8]}.yml"
-    string_seed = sha256(file_name.encode())
+    file_name = f"{k_shot}shot_nOuter{n_outer_splits}_nInner{n_inner_splits}_{test_study}_{data_hash[:8]}.yml"
+    string_seed = sha256(
+        test_study.encode()
+    )  # The test_study is the seed, but file_name is related to caching
     string_seed = int.from_bytes(
         string_seed.digest()[:4], byteorder="little", signed=False
     )
@@ -392,7 +398,10 @@ def get_cross_validation_sun_et_al_data_splits(
         if save_splits:
             if not os.path.exists(save_in / file_name):
                 with open(save_in / file_name, "w") as f:
-                    cross_val_data_selection = [test_loop_data_selection, val_loop_data_selection]
+                    cross_val_data_selection = [
+                        test_loop_data_selection,
+                        val_loop_data_selection,
+                    ]
                     yaml.safe_dump(
                         cross_val_data_selection, f, default_flow_style=False
                     )

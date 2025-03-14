@@ -227,7 +227,7 @@ def main(
             k_shot=train_k_shot,
             balanced_or_unbalanced=balanced_or_unbalanced,
             n_outer_splits=n_outer_splits,
-            n_inner_splits=0,  # we don't care about anything else except test data
+            n_inner_splits=n_inner_splits,  # we don't care about anything else except test data, but we still use n_inner_splits for reproducibility
         )
         labels = metadata["Group"]
     else:
