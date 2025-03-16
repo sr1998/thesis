@@ -22,7 +22,6 @@ from loguru import logger
 import wandb
 from src.helper_function import (
     encode_labels,
-    get_cluster_save_directory,
     get_pipeline,
     get_run_dir_for_experiment,
     get_scores,
@@ -138,7 +137,6 @@ def main(
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
     run_dir = get_run_dir_for_experiment(misc_config)
-    model_save_dir = get_cluster_save_directory(misc_config) or run_dir
 
     # Set up file logging
     logger_path = run_dir / "log.log"
@@ -294,15 +292,18 @@ def main(
                     "Importance": list(param_importance.values()),
                 }
             )
-            wandb.log(
-                {
-                    f"param_imp_outer_loop_{i}": wandb.Table(
-                        dataframe=param_importance_df
-                    )
-                }
+            # wandb.log(
+            #     {
+            #         f"param_imp_outer_loop_{i}": wandb.Table(
+            #             dataframe=param_importance_df
+            #         )
+            #     }
+            # )
+            param_importance_df.to_csv(
+                run_dir / f"param_importance_outer_loop_{i}.csv", index=False
             )
         except Exception:
-            pass
+            logger.error("Error in plotting parameter importances")
 
         best_trial = optuna_study.best_trial
         # save best trial parameters + split for this loop
@@ -322,7 +323,7 @@ def main(
         best_model.fit(train_data, train_labels)
         # save the model
         if save_model:
-            model_path = model_save_dir / f"pipeline_outer_cv_{i}.joblib"
+            model_path = run_dir / f"best_model_outer_fold_{i}.joblib"
             joblib_dump(best_model, model_path)
 
         train_outer_cv_score = get_scores(
@@ -375,8 +376,10 @@ def main(
         {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
     )
 
-    wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
-    wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
+    # wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
+    # wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
+    train_summary_df.to_csv(run_dir / "train_metrics_summary.csv", index=False)
+    test_summary_df.to_csv(run_dir / "test_metrics_summary.csv", index=False)
 
     # Save all outer CV splits and best trial parameters
     # results_df = pd.DataFrame(split_config)
@@ -400,7 +403,7 @@ def main(
     if not split_rf_importance_df.empty:
         feature_importance_path = run_dir / "feature_importance.csv"
         split_rf_importance_df.to_csv(feature_importance_path, index=False)
-        wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
+        # wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
 
         # mean and std of importance of outer runs
         rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
@@ -414,13 +417,13 @@ def main(
             }
         )
 
-        wandb.log(
-            {
-                "RF Feature Importance Summary": wandb.Table(
-                    dataframe=rf_importance_summary_df
-                )
-            }
-        )
+        # wandb.log(
+        #     {
+        #         "RF Feature Importance Summary": wandb.Table(
+        #             dataframe=rf_importance_summary_df
+        #         )
+        #     }
+        # )
         importance_summary_path = run_dir / "feature_importance_summary.csv"
         rf_importance_summary_df.to_csv(importance_summary_path, index=False)
 

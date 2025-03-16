@@ -11,7 +11,6 @@ from src.data.dataloader import (
     get_cross_validation_sun_et_al_data_splits,
 )
 from src.helper_function import (
-    get_cluster_save_directory,
     get_run_dir_for_experiment,
     optuna_wandb_callback,
 )
@@ -174,8 +173,6 @@ def main(
 
     wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_J{job_id}"
     run_dir = get_run_dir_for_experiment({"wandb_params": {"name": wandb_name}})
-    model_save_dir = get_cluster_save_directory({"wandb_params": {"name": wandb_name}}) or run_dir
-    logger.info(f"Model save dir: {model_save_dir}")
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -236,7 +233,10 @@ def main(
                     "Importance": list(param_importance.values()),
                 }
             )
-            wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
+            # wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
+            param_importance_df.to_csv(
+                run_dir / "param_importance.csv", index=False
+            )
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error in plotting param importance: {e}")
@@ -281,7 +281,7 @@ def main(
             val_or_test="test",
             log_metrics=True,
             score_name_prefix=f"outer_fold_{i}_fit",
-            save_best_model_path=model_save_dir / f"best_model_outer_fold_{i}.pt",
+            save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
         )
 
         train_res = {
@@ -312,8 +312,12 @@ def main(
     )
 
     if not train_summary_df.empty:
-        wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
-    wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
+        # wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
+        train_summary_df.to_csv(
+            run_dir / "train_metrics_summary.csv", index=False
+        )
+    # wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
+    test_summary_df.to_csv(run_dir / "test_metrics_summary.csv", index=False)
 
     # Save all outer CV splits and best trial parameters
     # results_df = pd.DataFrame(split_config)
@@ -335,7 +339,7 @@ if __name__ == "__main__":
 
     # main(
     #     datasource="sun et al",
-    #     algorithm="Reptile",
+    #     algorithm="MAML",
     #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
     #     test_study="JieZ_2017",

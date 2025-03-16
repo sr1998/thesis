@@ -4,6 +4,7 @@ from importlib import import_module
 from pathlib import Path
 
 from sklearn.inspection import permutation_importance
+from optuna.visualization import plot_param_importances
 
 from joblib import dump as joblib_dump
 from src.data.dataloader import get_mgnify_data, get_sun_et_al_study_data
@@ -196,17 +197,17 @@ def main(
 
     logger.success("Data obtained")
 
-    # log data statistics to wandb
-    wandb.log(
-        {"Data description": wandb.Table(dataframe=data.describe().T.reset_index())},
-    )
-    wandb.log(
-        {
-            "labels": wandb.Table(
-                dataframe=labels.value_counts(dropna=False).reset_index()
-            )
-        },
-    )
+    # # log data statistics to wandb
+    # wandb.log(
+    #     {"Data description": wandb.Table(dataframe=data.describe().T.reset_index())},
+    # )
+    # wandb.log(
+    #     {
+    #         "labels": wandb.Table(
+    #             dataframe=labels.value_counts(dropna=False).reset_index()
+    #         )
+    #     },
+    # )
 
     encoded_labels = encode_labels(
         label_preprocessor, labels, positive_class_label=positive_class_label
@@ -253,6 +254,29 @@ def main(
                 ),
                 n_trials=tuning_num_samples,
             )
+
+            try:
+                fig = plot_param_importances(optuna_study)
+                wandb.log({f"param_imp_fig_outer_loop_{i}": wandb.Plotly(fig)})
+                param_importance = optuna.importance.get_param_importances(optuna_study)
+                param_importance_df = pd.DataFrame(
+                    {
+                        "Parameter": list(param_importance.keys()),
+                        "Importance": list(param_importance.values()),
+                    }
+                )
+                # wandb.log(
+                #     {
+                #         f"param_imp_outer_loop_{i}": wandb.Table(
+                #             dataframe=param_importance_df
+                #         )
+                #     }
+                # )
+                param_importance_df.to_csv(
+                    run_dir / f"param_importance_outer_loop_{i}.csv", index=False
+                )
+            except Exception:
+                logger.error("Error in plotting parameter importances")
 
             best_trial = optuna_study.best_trial
             # save best trial parameters + split for this loop
@@ -362,14 +386,17 @@ def main(
         {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
     )
 
-    wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
-    wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
+    # wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
+    # wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
+    # save locally
+    train_summary_df.to_csv(run_dir / "train_metrics_summary.csv", index=False)
+    test_summary_df.to_csv(run_dir / "test_metrics_summary.csv", index=False)
 
     # Save all outer CV splits and best trial parameters
     results_df = pd.DataFrame(split_config)
     results_path = run_dir / "outer_cv_results.csv"
     results_df.to_csv(results_path, index=False)
-    wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
+    # wandb.log({"Outer CV Results": wandb.Table(dataframe=results_df)})
     logger.success(
         f"Saved all outer CV splits and best trial parameters to {results_path} and wandb."
     )
@@ -387,7 +414,7 @@ def main(
         # Save RF feature importance
         feature_importance_path = run_dir / "feature_importance.csv"
         split_rf_importance_df.to_csv(feature_importance_path, index=False)
-        wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
+        # wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
 
         # mean and std of importance of outer runs
         rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
@@ -401,13 +428,13 @@ def main(
             }
         )
 
-        wandb.log(
-            {
-                "RF Feature Importance Summary": wandb.Table(
-                    dataframe=rf_importance_summary_df
-                )
-            }
-        )
+        # wandb.log(
+        #     {
+        #         "RF Feature Importance Summary": wandb.Table(
+        #             dataframe=rf_importance_summary_df
+        #         )
+        #     }
+        # )
         importance_summary_path = run_dir / "feature_importance_summary.csv"
         rf_importance_summary_df.to_csv(importance_summary_path, index=False)
 

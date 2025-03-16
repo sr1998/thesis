@@ -100,15 +100,6 @@ def get_run_dir_for_experiment(config: dict[str, object]):
     return run_dir
 
 
-def get_cluster_save_directory(config: dict[str, object]):
-    save_dir = Path("/tudelft.net/staff-umbrella/abeellabstudents/sramezani/")
-    if not os.path.exists(save_dir):
-        return None
-    save_dir = save_dir / "models" / config["wandb_params"]["name"]
-    save_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
-    return save_dir
-
-
 # def get_data_dir_for_experiment(config: dict[str, object]):
 #     data_dir = BASE_DATA_DIR / config["wandb_params"]["name"]
 #     data_dir.mkdir(parents=True, exist_ok=True, mode=0o755)

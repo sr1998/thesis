@@ -3,9 +3,10 @@ import sys
 from importlib import import_module
 from pathlib import Path
 
-from joblib import dump as joblib_dump
+from optuna.visualization import plot_param_importances
 from sklearn.inspection import permutation_importance
 
+from joblib import dump as joblib_dump
 from src.data.dataloader import (
     get_cross_validation_sun_et_al_data_splits,
     split_sun_et_al_data,
@@ -24,7 +25,6 @@ from src.helper_function import (
     df_str_for_loguru,
     encode_labels,
     extend_train_with_support_set_from_eval,
-    get_cluster_save_directory,
     get_pipeline,
     get_run_dir_for_experiment,
     get_scores,
@@ -42,6 +42,7 @@ def main(
     balanced_or_unbalanced: str,
     train_k_shot: int,
     positive_class_label: str | None = None,
+    splitting_method: str = "normal",  # "normal" or "study_wise"
     metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
     features_to_use: list[str] = None,
@@ -136,7 +137,6 @@ def main(
     setup["array_job_id"] = array_job_id
     setup["array_task_id"] = array_task_id
 
-
     wandb_name = f"{datasource}_TS{test_study}_{algorithm}_T{tax_level}_{train_k_shot}shot_{balanced_or_unbalanced}"  # _VS{val_study}
 
     # get misc config parameters
@@ -148,7 +148,6 @@ def main(
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
     run_dir = get_run_dir_for_experiment(misc_config)
-    model_save_dir = get_cluster_save_directory(misc_config) or run_dir
 
     # Set up file logging
     logger_path = run_dir / "log.log"
@@ -193,9 +192,9 @@ def main(
 
     if search_space_sampler:
         optuna_study = optuna.create_study(
-                direction=tuning_mode,
-                study_name=f"hyper-param_optimization_for_{wandb.run.name}",
-            )
+            direction=tuning_mode,
+            study_name=f"hyper-param_optimization_for_{wandb.run.name}",
+        )
         optuna_study.optimize(
             lambda trial: hyp_param_eval_for_baseline_metalearning(
                 datasource,
@@ -211,7 +210,29 @@ def main(
             ),
             n_trials=tuning_num_samples,
         )
-    else: 
+        try:
+            fig = plot_param_importances(optuna_study)
+            wandb.log({f"param_imp_fig_outer_loop_{i}": wandb.Plotly(fig)})
+            param_importance = optuna.importance.get_param_importances(optuna_study)
+            param_importance_df = pd.DataFrame(
+                {
+                    "Parameter": list(param_importance.keys()),
+                    "Importance": list(param_importance.values()),
+                }
+            )
+            # wandb.log(
+            #     {
+            #         f"param_imp_outer_loop_{i}": wandb.Table(
+            #             dataframe=param_importance_df
+            #         )
+            #     }
+            # )
+            param_importance_df.to_csv(
+                run_dir / f"param_importance_outer_loop_{i}.csv", index=False
+            )
+        except Exception:
+            logger.error("Error in plotting parameter importances")
+    else:
         optuna_study = None
 
     for i, test_support_set in test_loop_data_selection.items():
@@ -231,7 +252,9 @@ def main(
 
         if balanced_or_unbalanced == "balanced":
             # We give metadata but get labels back
-            train_data_extended, train_labels_extended = make_data_balanced_per_study(train_data_extended, train_metadata_extended)
+            train_data_extended, train_labels_extended = make_data_balanced_per_study(
+                train_data_extended, train_metadata_extended
+            )
         else:
             train_labels_extended = train_metadata_extended["Group"]
 
@@ -340,8 +363,8 @@ def main(
         {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
     )
 
-    wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
-    wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
+    # wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
+    # wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
 
     # Save all outer CV splits and best trial parameters
     # results_df = pd.DataFrame(split_config)
@@ -366,31 +389,30 @@ def main(
     #     run_dir / "feature_importance.csv"
     # )
     # split_rf_importance_df.to_csv(feature_importance_path, index=False)
-    wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
+    # wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
 
-    # mean and std of importance of outer runs
-    rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
-    rf_importance_std = split_rf_importance_df.groupby("Feature").std()
+    if not split_rf_importance_df.empty:
+        # mean and std of importance of outer runs
+        rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
+        rf_importance_std = split_rf_importance_df.groupby("Feature").std()
 
-    rf_importance_summary_df = pd.DataFrame(
-        {
-            "Feature": rf_importance_mean.index,
-            "Mean Importance": rf_importance_mean["RF Importance"],
-            "Std Importance": rf_importance_std["RF Importance"],
-        }
-    )
+        rf_importance_summary_df = pd.DataFrame(
+            {
+                "Feature": rf_importance_mean.index,
+                "Mean Importance": rf_importance_mean["RF Importance"],
+                "Std Importance": rf_importance_std["RF Importance"],
+            }
+        )
 
-    wandb.log(
-        {
-            "RF Feature Importance Summary": wandb.Table(
-                dataframe=rf_importance_summary_df
-            )
-        }
-    )
-    # importance_summary_path = (
-    #     run_dir / "feature_importance_summary.csv"
-    # )
-    # rf_importance_summary_df.to_csv(importance_summary_path, index=False)
+        # wandb.log(
+        #     {
+        #         "RF Feature Importance Summary": wandb.Table(
+        #             dataframe=rf_importance_summary_df
+        #         )
+        #     }
+        # )
+        importance_summary_path = run_dir / "feature_importance_summary.csv"
+        rf_importance_summary_df.to_csv(importance_summary_path, index=False)
 
     logger.success("Done!")
     wandb.finish()
@@ -401,7 +423,7 @@ if __name__ == "__main__":
 
     # main(
     #     datasource="sun et al",
-    #     algorithm="RandomForestClassifier",
+    #     algorithm="NeuralNet",
     #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
     #     test_study="LiJ_2017",
