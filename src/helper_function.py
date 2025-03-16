@@ -95,7 +95,7 @@ def create_pipeline(steps: list[object], config: dict[str, object]) -> ImbPipeli
 
 
 def get_run_dir_for_experiment(job_name: str, algorithm: str, study: str, wandb_name):
-    run_dir = BASE_RUN_DIR / job_name / algorithm / study / wandb_name
+    run_dir = BASE_RUN_DIR / job_name / algorithm / str(study) / wandb_name
     run_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
     return run_dir
 
