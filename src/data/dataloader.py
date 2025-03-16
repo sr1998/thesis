@@ -226,11 +226,12 @@ def get_sun_et_al_study_data(
     )
 
     # Filter metadata to only include the study of interest
-    metadata = metadata[metadata["Project_1"] == study]
+    if study:
+        metadata = metadata[metadata["Project_1"] == study]
     metadata = metadata.set_index("Sample")
     labels = metadata["Group"]
 
-    # Filter data to only include samples that are in the metadata
+    # Filter data to only include samples that are in the metadata and make the order the samee
     data = data.loc[labels.index]
 
     return data, labels

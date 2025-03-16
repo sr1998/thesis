@@ -43,6 +43,22 @@ def rf_search_space_sampler(optuna_trial, best_fit_scorer):
 
 
 def nn_search_space_sampler(optuna_trial):
+    if optuna_trial is None:
+        return {
+            "model__n_epochs": 20,
+            "model__batch_size": 16,
+            "model__lr": 1e-3,
+            "do_normalization_before_scaling": True,
+            "scaler__scale_factor": 100,
+            "model__num_layers": 2,
+            "model__layer_sizes": None,
+            "model__dropout_rate": 0.5,
+            "model__layer_norm": False,
+            "model__batch_norm": True,
+            "model__activation": "relu",
+            "model__log_metrics_every_n_epoch": 10,
+            "model__log_gradients_every_n_epoch": 10,
+        }
     scale_factor_before_training = optuna_trial.suggest_int("scale_factor_before_training", 1, 1001, step=100)
 
     # model__n_epochs = optuna_trial.suggest_int("model__n_epochs", 1, 200)

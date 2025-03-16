@@ -29,10 +29,11 @@ from src.helper_function import (
 def main(
     datasource: str,
     config_script: str,
+    algorithm: str | None = None,
     *,
-    study: str | list[str],
     abundance_file: str | Path,  # for sun et al. data for now
     metadata_file: str | Path,  # for sun et al. data for now
+    study: str | list[str] | None = None,
     summary_type: str | None = None,
     pipeline_version: str | None = None,
     label_col: str | None = None,
@@ -78,7 +79,7 @@ def main(
 
     """
     config_module = import_module(config_script)
-    setup = config_module.get_setup()
+    setup = config_module.get_setup(algorithm)
     (
         misc_config,
         _,
@@ -101,6 +102,7 @@ def main(
     tax_level = abundance_file.split("_")[1]
     setup["tax_level"] = tax_level
     setup["model"] = standard_pipeline.named_steps["model"].__class__.__name__
+    setup["device"] = standard_pipeline.named_steps["model"].device
     if datasource == "mgnify":
         setup["summary_type"] = summary_type
         setup["pipeline_version"] = pipeline_version
@@ -178,6 +180,7 @@ def main(
         )
     elif datasource == "sun et al":
         data, labels = get_sun_et_al_study_data(study, abundance_file, metadata_file)
+
     else:
         raise ValueError("Invalid value for 'datasource'")
 
@@ -221,46 +224,57 @@ def main(
             **inner_cv_config["params"], random_state=random_state
         )
 
-        optuna_study = optuna.create_study(
-            direction=tuning_mode, study_name=f"outer_cv_{i}_for_{wandb.run.name}"
-        )
-        optuna_study.optimize(
-            lambda trial: hyp_param_eval_with_cv(
-                datasource,
-                X_train,
-                y_train,
-                inner_cv,
-                standard_pipeline,
-                scoring,
-                best_fit_scorer,
-                i,
-                search_space_sampler,
-                trial,
-            ),
-            n_trials=tuning_num_samples,
-        )
+        if tuning_num_samples > 0:
+            optuna_study = optuna.create_study(
+                direction=tuning_mode, study_name=f"outer_cv_{i}_for_{wandb.run.name}"
+            )
+            optuna_study.optimize(
+                lambda trial: hyp_param_eval_with_cv(
+                    datasource,
+                    X_train,
+                    y_train,
+                    inner_cv,
+                    standard_pipeline,
+                    scoring,
+                    best_fit_scorer,
+                    i,
+                    search_space_sampler,
+                    trial,
+                ),
+                n_trials=tuning_num_samples,
+            )
 
-        best_trial = optuna_study.best_trial
-        # save best trial parameters + split for this loop
-        best_trial_params = best_trial.params
-        best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
-        # Convert to a dictionary format for easier table storage
-        split_entry = {
-            "outer_cv_split": i,
-            "train_size": len(train_index),
-            "test_size": len(test_index),
-            **best_trial_params,  # Add all hyperparameters
-            "train_indices": ";".join(
-                map(str, train_index)
-            ),  # Store indices as a semicolon-separated string
-            "test_indices": ";".join(map(str, test_index)),
-        }
+            best_trial = optuna_study.best_trial
+            # save best trial parameters + split for this loop
+            best_trial_params = best_trial.params
+            best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+            
+            # Convert to a dictionary format for easier table storage
+            split_entry = {
+                "outer_cv_split": i,
+                "train_size": len(train_index),
+                "test_size": len(test_index),
+                **best_trial_params,  # Add all hyperparameters
+                "train_indices": ";".join(
+                    map(str, train_index)
+                ),  # Store indices as a semicolon-separated string
+                "test_indices": ";".join(map(str, test_index)),
+            }
 
-        split_config.append(split_entry)
+            split_config.append(split_entry)
+        else:
+            best_trial = None
 
         best_model = get_pipeline(
             datasource, standard_pipeline, search_space_sampler, best_trial
         )
+        # set eval data
+        if algorithm == "NeuralNet":
+            best_model.named_steps["model"].X_eval =  X_test
+            best_model.named_steps["model"].y_eval = y_test
+            best_model.named_steps["model"].score_name_prefix = f"outer_loop_{i}"
+            best_model.named_steps["model"].val_or_test = "test"
+
         best_model.fit(X_train, y_train)
         # save the model
         if save_model:
@@ -359,32 +373,33 @@ def main(
     #     {"Permutation Feature Imp": wandb.Table(dataframe=split_permutation_importance)}
     # )
 
-    # Save RF feature importance
-    feature_importance_path = run_dir / "feature_importance.csv"
-    split_rf_importance_df.to_csv(feature_importance_path, index=False)
-    wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
+    if hasattr(best_model.named_steps["model"], "feature_importances_"):
+        # Save RF feature importance
+        feature_importance_path = run_dir / "feature_importance.csv"
+        split_rf_importance_df.to_csv(feature_importance_path, index=False)
+        wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
 
-    # mean and std of importance of outer runs
-    rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
-    rf_importance_std = split_rf_importance_df.groupby("Feature").std()
+        # mean and std of importance of outer runs
+        rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
+        rf_importance_std = split_rf_importance_df.groupby("Feature").std()
 
-    rf_importance_summary_df = pd.DataFrame(
-        {
-            "Feature": rf_importance_mean.index,
-            "Mean Importance": rf_importance_mean["RF Importance"],
-            "Std Importance": rf_importance_std["RF Importance"],
-        }
-    )
+        rf_importance_summary_df = pd.DataFrame(
+            {
+                "Feature": rf_importance_mean.index,
+                "Mean Importance": rf_importance_mean["RF Importance"],
+                "Std Importance": rf_importance_std["RF Importance"],
+            }
+        )
 
-    wandb.log(
-        {
-            "RF Feature Importance Summary": wandb.Table(
-                dataframe=rf_importance_summary_df
-            )
-        }
-    )
-    importance_summary_path = run_dir / "feature_importance_summary.csv"
-    rf_importance_summary_df.to_csv(importance_summary_path, index=False)
+        wandb.log(
+            {
+                "RF Feature Importance Summary": wandb.Table(
+                    dataframe=rf_importance_summary_df
+                )
+            }
+        )
+        importance_summary_path = run_dir / "feature_importance_summary.csv"
+        rf_importance_summary_df.to_csv(importance_summary_path, index=False)
 
     logger.success("Done!")
     wandb.finish()
@@ -392,6 +407,15 @@ def main(
 
 if __name__ == "__main__":
     fire.Fire(main)
+
+    # main(
+    #     datasource="sun et al",
+    #     config_script="run_configs.overfitting",
+    #     algorithm="NeuralNet",
+    #     abundance_file="mpa4_species_profile_after_abundance_prevalence_filtering.csv",
+    #     metadata_file="sample_group_species_preprocessed.csv",
+    #     positive_class_label="Disease",
+    # )
 
     # main(
     #     "mgnify",
