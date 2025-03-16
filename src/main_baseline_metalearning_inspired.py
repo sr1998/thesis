@@ -137,7 +137,7 @@ def main(
     setup["array_job_id"] = array_job_id
     setup["array_task_id"] = array_task_id
 
-    wandb_name = f"{datasource}_TS{test_study}_{algorithm}_T{tax_level}_{train_k_shot}shot_{balanced_or_unbalanced}"  # _VS{val_study}
+    wandb_name = f"{datasource}_TS{test_study}_{algorithm}_T{tax_level}_{train_k_shot}shot_{balanced_or_unbalanced}_{array_job_id or job_id}"  # _VS{val_study}
 
     # get misc config parameters
     use_wandb = misc_config["wandb"]
@@ -147,7 +147,7 @@ def main(
     wandb_params = misc_config["wandb_params"]
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
-    run_dir = get_run_dir_for_experiment(misc_config)
+    run_dir = get_run_dir_for_experiment("baselined_metalearning_inspired", algorithm, test_study, wandb_name)
 
     # Set up file logging
     logger_path = run_dir / "log.log"

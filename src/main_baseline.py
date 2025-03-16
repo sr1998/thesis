@@ -100,7 +100,11 @@ def main(
         tuning_num_samples,
     ) = setup.values()
 
+    job_id = os.getenv("SLURM_JOB_ID")
+    array_job_id = os.getenv("SLURM_ARRAY_JOB_ID")
+    array_task_id = os.getenv("SLURM_ARRAY_TASK_ID")
     setup["datasource"] = datasource
+    setup["algorithm"] = algorithm
     setup["study"] = study
     setup["abundance_file"] = abundance_file
     setup["metadata_file"] = metadata_file
@@ -115,9 +119,12 @@ def main(
         setup["label_col"] = label_col
     setup["positive_class_label"] = positive_class_label
     setup["metdata_cols_to_use_as_features"] = metadata_cols_to_use_as_features
+    setup["job_id"] = job_id
+    setup["array_job_id"] = array_job_id
+    setup["array_task_id"] = array_task_id
 
     job_id = os.getenv("SLURM_JOB_ID")
-    wandb_name = f"{datasource}__d_{study}__t_{tax_level}__{balanced_or_unbalanced}"
+    wandb_name = f"{datasource}__d_{study}__t_{tax_level}__{balanced_or_unbalanced}__{array_job_id or job_id}"
     wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
 
     # get misc config parameters
@@ -127,7 +134,7 @@ def main(
     )
     wandb_params = misc_config["wandb_params"]
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
-    run_dir = get_run_dir_for_experiment(misc_config)
+    run_dir = get_run_dir_for_experiment("baseline", algorithm, study, wandb_name)
 
     # Set up file logging
     logger_path = run_dir / "log.log"

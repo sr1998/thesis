@@ -125,7 +125,7 @@ def main(
     setup["array_job_id"] = array_job_id
     setup["array_task_id"] = array_task_id
 
-    wandb_name = f"w_{datasource}__d_{study}__m_{algorithm}__{train_k_shot}shot__{balanced_or_unbalanced}"
+    wandb_name = f"w_{datasource}__d_{study}__m_{algorithm}__{train_k_shot}shot__{balanced_or_unbalanced}__{array_job_id or job_id}"
     wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
 
     # get misc config parameters
@@ -136,7 +136,7 @@ def main(
     wandb_params = misc_config["wandb_params"]
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
-    run_dir = get_run_dir_for_experiment(misc_config)
+    run_dir = get_run_dir_for_experiment("baselined_with_predetermined_data_splits", algorithm, study, wandb_name)
 
     # Set up file logging
     logger_path = run_dir / "log.log"

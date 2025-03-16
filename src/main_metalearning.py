@@ -171,8 +171,8 @@ def main(
         # "e_k" + str(eval_k_shot),
     ]
 
-    wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_J{job_id}"
-    run_dir = get_run_dir_for_experiment({"wandb_params": {"name": wandb_name}})
+    wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_{array_job_id or job_id}"
+    run_dir = get_run_dir_for_experiment("metalearning", algorithm, test_study, wandb_name)
 
     # Initialize wandb if enabled
     if use_wandb:
