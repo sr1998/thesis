@@ -45,7 +45,7 @@ def rf_search_space_sampler(optuna_trial, best_fit_scorer):
 def nn_search_space_sampler(optuna_trial):
     if optuna_trial is None:
         return {
-            "model__n_epochs": 20,
+            "model__n_epochs": 100,
             "model__batch_size": 16,
             "model__lr": 1e-3,
             "do_normalization_before_scaling": True,
@@ -96,7 +96,7 @@ def nn_search_space_sampler(optuna_trial):
         model__layer_sizes.append(layer_size)
 
     return {
-        "model__n_epochs": 5,
+        "model__n_epochs": 100,
         "model__batch_size": model__batch_size,
         "model__lr": model__lr,
         "do_normalization_before_scaling": True,
