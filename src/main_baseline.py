@@ -33,6 +33,7 @@ def main(
     *,
     abundance_file: str | Path,  # for sun et al. data for now
     metadata_file: str | Path,  # for sun et al. data for now
+    balanced_or_unbalanced: str,
     study: str | list[str] | None = None,
     summary_type: str | None = None,
     pipeline_version: str | None = None,
@@ -79,7 +80,10 @@ def main(
 
     """
     config_module = import_module(config_script)
-    setup = config_module.get_setup(algorithm)
+    setup = config_module.get_setup(
+        algorithm,
+        with_oversampling=True if balanced_or_unbalanced == "balanced" else False,
+    )
     (
         misc_config,
         _,
@@ -99,6 +103,7 @@ def main(
     setup["study"] = study
     setup["abundance_file"] = abundance_file
     setup["metadata_file"] = metadata_file
+    setup["balanced_or_unbalanced"] = balanced_or_unbalanced
     tax_level = abundance_file.split("_")[1]
     setup["tax_level"] = tax_level
     setup["model"] = standard_pipeline.named_steps["model"].__class__.__name__
@@ -111,7 +116,7 @@ def main(
     setup["metdata_cols_to_use_as_features"] = metadata_cols_to_use_as_features
 
     job_id = os.getenv("SLURM_JOB_ID")
-    wandb_name = f"w_{datasource}__d_{study}__j_{job_id}__t_{tax_level}"
+    wandb_name = f"{datasource}__d_{study}__t_{tax_level}__{balanced_or_unbalanced}"
     wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
 
     # get misc config parameters
@@ -130,8 +135,9 @@ def main(
 
     wandb_base_tags = [
         "d_" + str(study),
-        "m_" + standard_pipeline.named_steps["model"].__class__.__name__,
-        "t_" + tax_level,
+        balanced_or_unbalanced,
+        tax_level,
+        algorithm,
     ]
 
     if datasource == "mgnify":
@@ -180,6 +186,10 @@ def main(
         )
     elif datasource == "sun et al":
         data, labels = get_sun_et_al_study_data(study, abundance_file, metadata_file)
+
+        # sample subset for testing code
+        data = data.iloc[:1000, :100]
+        labels = labels.iloc[:1000]
 
     else:
         raise ValueError("Invalid value for 'datasource'")
@@ -248,7 +258,7 @@ def main(
             # save best trial parameters + split for this loop
             best_trial_params = best_trial.params
             best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
-            
+
             # Convert to a dictionary format for easier table storage
             split_entry = {
                 "outer_cv_split": i,
@@ -270,7 +280,7 @@ def main(
         )
         # set eval data
         if algorithm == "NeuralNet":
-            best_model.named_steps["model"].X_eval =  X_test
+            best_model.named_steps["model"].X_eval = X_test
             best_model.named_steps["model"].y_eval = y_test
             best_model.named_steps["model"].score_name_prefix = f"outer_loop_{i}"
             best_model.named_steps["model"].val_or_test = "test"
