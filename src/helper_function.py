@@ -94,8 +94,8 @@ def create_pipeline(steps: list[object], config: dict[str, object]) -> ImbPipeli
     return ImbPipeline(steps, memory=cacher, verbose=config.get("verbose_pipeline", True))
 
 
-def get_run_dir_for_experiment(config: dict[str, object]):
-    run_dir = BASE_RUN_DIR / config["wandb_params"]["name"]
+def get_run_dir_for_experiment(job_name: str, algorithm: str, study: str, wandb_name):
+    run_dir = BASE_RUN_DIR / job_name / algorithm / study / wandb_name
     run_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
     return run_dir
 
