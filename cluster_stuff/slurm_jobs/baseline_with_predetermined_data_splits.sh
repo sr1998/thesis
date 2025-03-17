@@ -50,12 +50,12 @@ curl https://curl.se/ca/cacert.pem -o ./cacert.pem
 export SSL_CERT_FILE=./cacert.pem
 
 # Setup environment
-# module use /opt/insy/modulefiles  # (on DAIC)
-# module load cuda/12.1  # If you want to use CUDA, it has to be loaded on the host
+module use /opt/insy/modulefiles  # (on DAIC)
+module load cuda/12.1  # If you want to use CUDA, it has to be loaded on the host
 
 ## Use this simple command to check that your sbatch 
 ## settings are working (it should show the GPU that you requested)
-# nvidia-smi
+nvidia-smi
 
 # Run script
 # Note: There cannot be any characters incuding space behind the `\` symbol.
