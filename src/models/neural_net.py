@@ -240,7 +240,6 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
 
     def evaluate(self, dataloader, score_name_prefix, log_metrics=True, epoch=None):
         """Evaluate the model on a dataset and optionally log metrics"""
-        print(score_name_prefix)
 
         self.model.eval()
         all_predictions = []

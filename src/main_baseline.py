@@ -3,8 +3,10 @@ import sys
 from importlib import import_module
 from pathlib import Path
 
-from sklearn.inspection import permutation_importance
 from optuna.visualization import plot_param_importances
+from sklearn.inspection import permutation_importance
+from torch import tensor
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
 
 from joblib import dump as joblib_dump
 from src.data.dataloader import get_mgnify_data, get_sun_et_al_study_data
@@ -195,10 +197,6 @@ def main(
     elif datasource == "sun et al":
         data, labels = get_sun_et_al_study_data(study, abundance_file, metadata_file)
 
-        # sample subset for testing code
-        data = data.iloc[:1000, :100]
-        labels = labels.iloc[:1000]
-
     else:
         raise ValueError("Invalid value for 'datasource'")
 
@@ -222,6 +220,8 @@ def main(
 
     train_scores = []
     test_scores = []
+    train_scores2 = []
+    test_scores2 = []
     split_config = []
 
     outer_cv = outer_cv_config["type"](**outer_cv_config["params"])
@@ -329,6 +329,45 @@ def main(
             best_model, X_test, y_test, scoring, score_name_prefix="test/"
         )
 
+        wandb.log(
+            {"Outer fold": dict(train_outer_cv_score, **test_outer_cv_score)},
+        )
+
+        # tuner_results.append(tuner_cv_result)
+        train_scores.append(train_outer_cv_score)
+        test_scores.append(test_outer_cv_score)
+
+        if algorithm == "NeuralNet":
+            device = best_model.named_steps["model"].device
+            X_batch = tensor(np.array(X_train)).to(device, dtype=float)
+            y_batch = tensor(np.array(y_train)).to(device, dtype=float)
+
+            dataset = TensorDataset(X_batch, y_batch)
+            sampler = RandomSampler(dataset)
+            dataloader = DataLoader(
+                dataset,
+                sampler=sampler,
+                batch_size=best_model.named_steps["model"].batch_size,
+            )
+            train_outer_cv_score2 = best_model.evaluate(dataloader, "train/")
+
+            X_batch = tensor(np.array(X_test)).to(device, dtype=float)
+            y_batch = tensor(np.array(y_test)).to(device, dtype=float)
+            dataset = TensorDataset(X_batch, y_batch)
+            sampler = RandomSampler(dataset)
+            dataloader = DataLoader(
+                dataset,
+                sampler=sampler,
+                batch_size=best_model.named_steps["model"].batch_size,
+            )
+            test_outer_cv_score2 = best_model.evaluate(dataloader, "test/")
+
+            wandb.log(
+                {"Outer fold2": dict(train_outer_cv_score2, **test_outer_cv_score2)},
+            )
+            train_scores2.append(train_outer_cv_score2)
+            test_scores2.append(test_outer_cv_score2)
+
         # Permutation importance (all zero. I guess due to correlation of features)
         # perm_importance = permutation_importance(
         #     best_model,
@@ -366,14 +405,6 @@ def main(
                 [split_rf_importance_df, rf_importance_df], axis=0
             )
 
-        wandb.log(
-            {"Outer fold": dict(train_outer_cv_score, **test_outer_cv_score)},
-        )
-
-        # tuner_results.append(tuner_cv_result)
-        train_scores.append(train_outer_cv_score)
-        test_scores.append(test_outer_cv_score)
-
     # log mean and std of the results
     train_scores = pd.DataFrame(train_scores)
     test_scores = pd.DataFrame(test_scores)
@@ -392,6 +423,30 @@ def main(
     test_summary_df = pd.DataFrame(
         {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
     )
+
+    if algorithm == "NeuralNet":
+        train_scores2 = pd.DataFrame(train_scores2)
+        test_scores2 = pd.DataFrame(test_scores2)
+        train_mean2 = train_scores2.mean()
+        test_mean2 = test_scores2.mean()
+        train_std2 = train_scores2.std()
+        test_std2 = test_scores2.std()
+        train_summary_df2 = pd.DataFrame(
+            {
+                "Metric": train_mean2.index,
+                "Mean": train_mean2.values,
+                "Std": train_std2.values,
+            }
+        )
+        test_summary_df2 = pd.DataFrame(
+            {
+                "Metric": test_mean2.index,
+                "Mean": test_mean2.values,
+                "Std": test_std2.values,
+            }
+        )
+        train_summary_df2.to_csv(run_dir / "train_metrics_summary2.csv", index=False)
+        test_summary_df2.to_csv(run_dir / "test_metrics_summary2.csv", index=False)
 
     # wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
     # wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})

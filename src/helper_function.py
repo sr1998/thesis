@@ -91,7 +91,9 @@ def create_pipeline(steps: list[object], config: dict[str, object]) -> ImbPipeli
     else:
         cacher = None
 
-    return ImbPipeline(steps, memory=cacher, verbose=config.get("verbose_pipeline", True))
+    return ImbPipeline(
+        steps, memory=cacher, verbose=config.get("verbose_pipeline", True)
+    )
 
 
 def get_run_dir_for_experiment(job_name: str, algorithm: str, study: str, wandb_name):
@@ -117,7 +119,7 @@ def get_scores(
     scores = {}
     y_n_unique = len(np.unique(y))
 
-    y_pred = model.predict_proba(X) if hasattr(model, "predict_proba") else None
+    y_pred_proba = model.predict_proba(X) if hasattr(model, "predict_proba") else None
     y_dec = model.decision_function(X) if hasattr(model, "decision_function") else None
     y_pred = model.predict(X)
 
@@ -127,9 +129,13 @@ def get_scores(
             if "roc_auc" in score_name or "average_precision" in score_name:
                 kwargs = scorer._kwargs if hasattr(scorer, "_kwargs") else {}
                 # Get kwargs available, e.g. {average="micro"} if scorer is not a string but a make_scorer object
-                if y_pred is not None:
-                    y_model = y_pred
+                if y_pred_proba is not None:
+                    y_model = y_pred_proba
                     scoring_function._response_method = "predict_proba"
+                    if y_n_unique == 2:
+                        y_model = y_pred_proba[
+                            :, 1
+                        ]  # Explicitly use the positive class
                 elif y_dec is not None:
                     y_model = y_dec
                     scoring_function._response_method = "decision_function"
@@ -137,18 +143,10 @@ def get_scores(
                     y_model = y_pred
                     scoring_function._response_method = "predict"
 
-                if (
-                    y_n_unique == 2 and y_pred is not None
-                ):  # [:, 1] needed somewhere, but this seems to work and [:, 0] does not
-                    scores[score_name_prefix + score_name] = scoring_function(
-                        y, y_model, **kwargs
-                    )
-                else:
-                    scores[score_name_prefix + score_name] = scoring_function(
-                        y, y_model, **kwargs
-                    )
+                scores[score_name_prefix + score_name] = scoring_function(
+                    y, y_model, **kwargs
+                )
             else:
-                y_pred = y_pred
                 scores[score_name_prefix + score_name] = scoring_function(y, y_pred)
         except Exception as e:
             logger.error(f"Error calculating {score_name} for {score_name_prefix}: {e}")
@@ -389,7 +387,9 @@ def hyp_param_eval_for_baseline_metalearning(
 
         if balanced_or_unbalanced == "balanced":
             # We give metadata but get labels back
-            train_data, train_labels = make_data_balanced_per_study(train_data, train_metadata)
+            train_data, train_labels = make_data_balanced_per_study(
+                train_data, train_metadata
+            )
         else:
             train_labels = train_metadata["Group"]
 
@@ -499,7 +499,9 @@ def extend_train_with_support_set_from_eval(
 ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame, pd.Series]:
     """Extend the training data with the support data from the evaluation data."""
     train_data = pd.concat([train_data, eval_data.loc[eval_support_indices]])
-    train_metadata = pd.concat([train_metadata, eval_metadata.loc[eval_support_indices]])
+    train_metadata = pd.concat(
+        [train_metadata, eval_metadata.loc[eval_support_indices]]
+    )
     train_metadata = train_metadata.loc[train_data.index]
 
     eval_data = eval_data.drop(eval_support_indices)
@@ -525,7 +527,7 @@ def make_data_balanced_per_study(train_data, train_metadata, method="SMOTE"):
     train_labels = train_metadata["Group"]
     balanced_data = []
     balanced_labels = []
-    
+
     for study_name, idx in grouped_per_study.groups.items():
         study_data = train_data.loc[idx]
         study_labels = train_labels.loc[idx]
@@ -539,12 +541,14 @@ def make_data_balanced_per_study(train_data, train_metadata, method="SMOTE"):
 
         balanced_data.append(study_data)
         balanced_labels.append(study_labels)
-    
+
     # Concatenate the balanced data and labels and shuffle
     balanced_data = pd.concat(balanced_data)
     balanced_labels = pd.concat(balanced_labels)
     balanced_data = balanced_data.sample(frac=1, random_state=42).reset_index(drop=True)
-    balanced_labels = balanced_labels.sample(frac=1, random_state=42).reset_index(drop=True)
+    balanced_labels = balanced_labels.sample(frac=1, random_state=42).reset_index(
+        drop=True
+    )
 
     return balanced_data, balanced_labels
 
@@ -570,12 +574,11 @@ def optuna_wandb_callback(study, trial, outer_cv_step: int | None = None):
 
 def check_run_finished(project_name, run_name, entity_name="shayan000"):
     api = wandb.Api()
-    runs = api.runs(f"{entity_name}/{project_name}", 
-                filters={"display_name": run_name})
-    
+    runs = api.runs(f"{entity_name}/{project_name}", filters={"display_name": run_name})
+
     for run in runs:
         if run.state == "finished":
             print(f"Run '{run_name}' exists and is finished. Stopping script.")
             exit(0)
-    
+
     print(f"No finished run named '{run_name}' found. Continuing...")
