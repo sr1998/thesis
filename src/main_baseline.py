@@ -338,35 +338,6 @@ def main(
         train_scores.append(train_outer_cv_score)
         test_scores.append(test_outer_cv_score)
 
-        if algorithm == "NeuralNet":
-            preds = best_model.predict(X_train)
-            metrics = compute_metrics(preds, y_train)
-            score_name_prefix = "train"
-            train_outer_cv_score2 = {
-                    f"{score_name_prefix}/accuracy": metrics["accuracy"],
-                    f"{score_name_prefix}/f1": metrics["f1"],
-                    f"{score_name_prefix}/precision": metrics["precision"],
-                    f"{score_name_prefix}/recall": metrics["recall"],
-                    f"{score_name_prefix}/roc_auc": metrics["roc_auc"],
-                }
-            
-            preds = best_model.predict(X_test)
-            metrics = compute_metrics(preds, y_test)
-            score_name_prefix = "test"
-            test_outer_cv_score2 = {
-                    f"{score_name_prefix}/accuracy": metrics["accuracy"],
-                    f"{score_name_prefix}/f1": metrics["f1"],
-                    f"{score_name_prefix}/precision": metrics["precision"],
-                    f"{score_name_prefix}/recall": metrics["recall"],
-                    f"{score_name_prefix}/roc_auc": metrics["roc_auc"],
-                }
-
-            wandb.log(
-                {"Outer fold2": dict(train_outer_cv_score2, **test_outer_cv_score2)},
-            )
-            train_scores2.append(train_outer_cv_score2)
-            test_scores2.append(test_outer_cv_score2)
-
         # Permutation importance (all zero. I guess due to correlation of features)
         # perm_importance = permutation_importance(
         #     best_model,
@@ -422,30 +393,6 @@ def main(
     test_summary_df = pd.DataFrame(
         {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
     )
-
-    if algorithm == "NeuralNet":
-        train_scores2 = pd.DataFrame(train_scores2)
-        test_scores2 = pd.DataFrame(test_scores2)
-        train_mean2 = train_scores2.mean()
-        test_mean2 = test_scores2.mean()
-        train_std2 = train_scores2.std()
-        test_std2 = test_scores2.std()
-        train_summary_df2 = pd.DataFrame(
-            {
-                "Metric": train_mean2.index,
-                "Mean": train_mean2.values,
-                "Std": train_std2.values,
-            }
-        )
-        test_summary_df2 = pd.DataFrame(
-            {
-                "Metric": test_mean2.index,
-                "Mean": test_mean2.values,
-                "Std": test_std2.values,
-            }
-        )
-        train_summary_df2.to_csv(run_dir / "train_metrics_summary2.csv", index=False)
-        test_summary_df2.to_csv(run_dir / "test_metrics_summary2.csv", index=False)
 
     # wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
     # wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})

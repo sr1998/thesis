@@ -19,7 +19,7 @@ class MicrobiomeDataset(Dataset):
         samples: pd.DataFrame,
         label_and_project: pd.DataFrame,
         preprocessor=None,
-        target_preprocessor=pandas_label_encoder,
+        target_preprocessor=pandas_label_encoder,   # TODO We want disease to be the positive class
         transform=None,
         target_transform=None,
         preselected_support_set: list[str] = None,  # only for val and test#TODO test thoroughly
@@ -200,3 +200,161 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
 
     def __len__(self):
         return len(self.groups_to_sample)
+    
+
+class LabelOnlyDataset(Dataset):
+    """Dataset class that only distinguishes between labels without separating studies."""
+
+    def __init__(
+        self,
+        samples,
+        labels,
+        preprocessor=None,
+        transform=None,
+        target_transform=None,
+    ):
+        """Constructor for the LabelOnlyDataset class.
+
+        Args:
+            samples: A numpy array containing the samples as rows and features as columns.
+            labels: A numpy array containing the labels for each sample.
+            preprocessor (callable, optional): Preprocesses the samples. Defaults to None.
+            transform (callable, optional): Transforms the samples. Defaults to None.
+            target_transform (callable, optional): Transforms the labels. Defaults to None.
+        """
+        super().__init__()
+        
+        # Apply preprocessor if provided
+        if preprocessor is not None:
+            samples = preprocessor(self.samples)
+            
+        # Convert to torch tensors
+        self.samples = tensor(samples, dtype=float32)
+        self.labels = tensor(labels, dtype=float32)
+        
+        # Store indices by label for efficient sampling
+        self.indices_by_label = {}
+        for idx, label in enumerate(self.labels):
+            label_val = label.item()
+            if label_val not in self.indices_by_label:
+                self.indices_by_label[label_val] = []
+            self.indices_by_label[label_val].append(idx)
+            
+        self.transform = transform
+        self.target_transform = target_transform
+
+    def __len__(self):
+        """Returns the number of samples in the dataset."""
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        """Returns the sample and label at the given index with transformations applied."""
+        sample = self.samples[idx]
+        label = self.labels[idx]
+        
+        if self.transform:
+            sample = self.transform(sample)
+            
+        if self.target_transform:
+            label = self.target_transform(label)
+            
+        return sample, label
+
+class KShotBatchSampler(Sampler):
+    """K-shot batch sampler that creates batches with k samples from each class."""
+
+    def __init__(
+        self,
+        dataset: LabelOnlyDataset,
+        k_shot: int,
+        include_query: bool = True,
+        query_size: int | str = None,
+        shuffle: bool = True,
+    ):
+        """Initialize the KShotBatchSampler.
+        
+        Args:
+            dataset: Dataset containing samples and indices by label
+            k_shot: Number of samples to include per class in support set
+            include_query: Whether to include a query set in batches
+            query_size: Number of samples per class in query set (defaults to k_shot if None)
+                        Special value "rest" will use all remaining samples
+            shuffle: Whether to shuffle the samples
+        """
+        self.dataset = dataset
+        self.k_shot = k_shot
+        self.include_query = include_query
+        self.use_all_remaining = query_size == "rest"
+        self.query_size = query_size if not self.use_all_remaining else None
+        if self.query_size is None and not self.use_all_remaining:
+            self.query_size = k_shot
+        self.shuffle = shuffle
+        
+        # Check if we have enough samples per class
+        for label, indices in self.dataset.indices_by_label.items():
+            min_required = k_shot
+            if include_query and not self.use_all_remaining:
+                min_required += self.query_size
+            if len(indices) < min_required:
+                print(f"Warning: Label {label} has fewer samples ({len(indices)}) than required ({min_required})")
+
+    def __iter__(self):
+        """Yields batches of indices for k-shot sampling with support and query sets."""
+        # Copy the indices to avoid modifying the original
+        indices_by_label = {
+            label: indices.copy() for label, indices in self.dataset.indices_by_label.items()
+        }
+        
+        # Shuffle if needed
+        if self.shuffle:
+            for indices in indices_by_label.values():
+                random.shuffle(indices)
+        
+        # Determine number of batches based on smallest class size
+        min_class_size = min(len(indices) for indices in indices_by_label.values())
+        
+        if self.use_all_remaining:
+            # When using "rest", we can only have 1 batch per full dataset
+            n_batches = 1
+        else:
+            # Otherwise calculate as before
+            samples_per_batch_per_class = self.k_shot
+            if self.include_query:
+                samples_per_batch_per_class += self.query_size
+            n_batches = min_class_size // samples_per_batch_per_class
+        
+        # Generate batches
+        for batch_idx in range(n_batches):
+            batch = []
+            
+            # First add support set (k samples per class)
+            for label, indices in indices_by_label.items():
+                if self.use_all_remaining:
+                    support_indices = indices[:self.k_shot]
+                else:
+                    start_idx = batch_idx * (self.k_shot + (self.query_size if self.include_query else 0))
+                    support_indices = indices[start_idx:start_idx + self.k_shot]
+                batch.extend(support_indices)
+            
+            # Then add query set if required
+            if self.include_query:
+                for label, indices in indices_by_label.items():
+                    if self.use_all_remaining:
+                        query_indices = indices[self.k_shot:]
+                    else:
+                        start_idx = batch_idx * (self.k_shot + self.query_size) + self.k_shot
+                        query_indices = indices[start_idx:start_idx + self.query_size]
+                    batch.extend(query_indices)
+            
+            yield batch
+
+    def __len__(self):
+        """Returns the number of batches."""
+        if self.use_all_remaining:
+            return 1  # Only one batch when using "rest"
+        else:
+            min_class_size = min(len(indices) for indices in self.dataset.indices_by_label.values())
+            samples_per_batch_per_class = self.k_shot
+            if self.include_query:
+                samples_per_batch_per_class += self.query_size
+            return min_class_size // samples_per_batch_per_class

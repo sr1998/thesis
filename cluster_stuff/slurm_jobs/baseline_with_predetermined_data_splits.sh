@@ -62,7 +62,8 @@ export SSL_CERT_FILE=./cacert.pem
 srun apptainer exec \
     -B $HOME:$HOME \
     -B /tudelft.net/staff-umbrella/abeellabstudents/sramezani:/tudelft.net/staff-umbrella/abeellabstudents/sramezani \
-    --env-file $HOME/.env \
+    --env-file /tudelft.net/staff-umbrella/abeellabstudents/sramezani/.env \
+    --nv \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_baseline_with_predetermined_data_splits \
     --balanced_or_unbalanced "$BALANCED_OR_UNBALANCED" \

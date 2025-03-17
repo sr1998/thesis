@@ -104,8 +104,8 @@ def nn_search_space_sampler(optuna_trial):
         "model__num_layers": model__num_layers,
         "model__layer_sizes": model__layer_sizes,
         "model__dropout_rate": model__dropout_rate,
-        "model__layer_norm": True,
-        "model__batch_norm": False,
+        "model__layer_norm": False,
+        "model__batch_norm": True,
         "model__activation": "relu",
     }
 
@@ -121,6 +121,7 @@ def maml_search_space_sampler(optuna_trial):
             "max_epochs": 100,
             "do_normalization_before_scaling": True,
             "scale_factor_before_training": 100,
+            "batch_size": 16,
             # Model architecture
             "model__num_layers": 2,
             "model__layer_sizes": None,

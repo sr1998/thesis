@@ -214,7 +214,7 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
         X = tensor(np.array(X))
         X = X.to(self.device, dtype=float)
         dataset = TensorDataset(X)
-        sampler = RandomSampler(dataset)
+        sampler = SequentialSampler(dataset)
         dataloader = DataLoader(dataset, sampler=sampler, batch_size=self.batch_size)
 
         # Prediction
