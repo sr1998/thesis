@@ -119,6 +119,7 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
             activation=self.activation,
         )
         self.model.to(self.device, dtype=float)
+        self.model.train()
 
         X_batch = tensor(np.array(X)).to(self.device, dtype=float)
         y_batch = tensor(np.array(y)).to(self.device, dtype=float)
@@ -167,7 +168,6 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
                         score_name_prefix=score_name_prefix + self.val_or_test,
                     )
 
-            self.model.train()
             epoch_loss = 0.0
             all_predictions = []
             all_targets = []
@@ -203,11 +203,11 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
                 epoch=epoch + 1,
                 score_name_prefix=score_name_prefix + self.val_or_test,
             )
-
         self._is_fitted = True
         return self
 
     def predict_proba(self, X):
+        self.model.eval()
         if not self._is_fitted:
             raise RuntimeError("Model has not been fitted yet")
 
@@ -235,6 +235,7 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
         return np.column_stack((1 - all_probs, all_probs))
 
     def predict(self, X):
+        self.model.eval()
         probs = self.predict_proba(X)
         return (probs[:, 1] > 0.5).astype(int)
 

@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Tenso
 
 from joblib import dump as joblib_dump
 from src.data.dataloader import get_mgnify_data, get_sun_et_al_study_data
+from src.scoring.metalearning_scoring_fn import compute_metrics
 
 sys.path.append(".")
 import fire
@@ -338,29 +339,27 @@ def main(
         test_scores.append(test_outer_cv_score)
 
         if algorithm == "NeuralNet":
-            device = best_model.named_steps["model"].device
-            X_batch = tensor(np.array(X_train)).to(device, dtype=float)
-            y_batch = tensor(np.array(y_train)).to(device, dtype=float)
-
-            dataset = TensorDataset(X_batch, y_batch)
-            sampler = RandomSampler(dataset)
-            dataloader = DataLoader(
-                dataset,
-                sampler=sampler,
-                batch_size=best_model.named_steps["model"].batch_size,
-            )
-            train_outer_cv_score2 = best_model.evaluate(dataloader, "train/")
-
-            X_batch = tensor(np.array(X_test)).to(device, dtype=float)
-            y_batch = tensor(np.array(y_test)).to(device, dtype=float)
-            dataset = TensorDataset(X_batch, y_batch)
-            sampler = RandomSampler(dataset)
-            dataloader = DataLoader(
-                dataset,
-                sampler=sampler,
-                batch_size=best_model.named_steps["model"].batch_size,
-            )
-            test_outer_cv_score2 = best_model.evaluate(dataloader, "test/")
+            preds = best_model.predict(X_train)
+            metrics = compute_metrics(preds, y_train)
+            score_name_prefix = "train"
+            train_outer_cv_score2 = {
+                    f"{score_name_prefix}/accuracy": metrics["accuracy"],
+                    f"{score_name_prefix}/f1": metrics["f1"],
+                    f"{score_name_prefix}/precision": metrics["precision"],
+                    f"{score_name_prefix}/recall": metrics["recall"],
+                    f"{score_name_prefix}/roc_auc": metrics["roc_auc"],
+                }
+            
+            preds = best_model.predict(X_test)
+            metrics = compute_metrics(preds, y_test)
+            score_name_prefix = "test"
+            test_outer_cv_score2 = {
+                    f"{score_name_prefix}/accuracy": metrics["accuracy"],
+                    f"{score_name_prefix}/f1": metrics["f1"],
+                    f"{score_name_prefix}/precision": metrics["precision"],
+                    f"{score_name_prefix}/recall": metrics["recall"],
+                    f"{score_name_prefix}/roc_auc": metrics["roc_auc"],
+                }
 
             wandb.log(
                 {"Outer fold2": dict(train_outer_cv_score2, **test_outer_cv_score2)},
