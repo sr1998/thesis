@@ -1,9 +1,10 @@
-from functools import partial
 import os
 import sys
+from functools import partial
 from importlib import import_module
 from pathlib import Path
 
+from numpy.random import RandomState
 from optuna.visualization import plot_param_importances
 
 from joblib import dump as joblib_dump
@@ -93,7 +94,7 @@ def main(
         n_outer_splits,
         n_inner_splits,
         _,
-        _,
+        inner_cv_config,
         standard_pipeline,
         label_preprocessor,
         scoring,
@@ -136,7 +137,9 @@ def main(
     wandb_params = misc_config["wandb_params"]
     verbose_pipeline = misc_config.get("verbose_pipeline", True)
 
-    run_dir = get_run_dir_for_experiment("baselined_with_predetermined_data_splits", algorithm, study, wandb_name)
+    run_dir = get_run_dir_for_experiment(
+        "baselined_with_predetermined_data_splits", algorithm, study, wandb_name
+    )
 
     # Set up file logging
     logger_path = run_dir / "log.log"
@@ -257,9 +260,9 @@ def main(
 
         # With random state defined like this, each experiment is reproducible but the inner cv splits are different per outer cv split
         # random_state = RandomState(i_outer_split)
-
-        inner_cv = KShotSplitter(
-            train_k_shot, n_inner_splits, random_state=i, shuffle=True
+        random_state = RandomState(i)
+        inner_cv = inner_cv_config["type"](
+            **inner_cv_config["params"], random_state=random_state
         )
 
         optuna_study = optuna.create_study(
@@ -433,15 +436,15 @@ def main(
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    # fire.Fire(main)
 
-    # main(
-    #     datasource="sun et al",
-    #     algorithm="NeuralNet",
-    #     abundance_file="mpa4_species_profile_preprocessed.csv",
-    #     metadata_file="sample_group_species_preprocessed.csv",
-    #     study="QinN_2014",
-    #     train_k_shot=10,
-    #     balanced_or_unbalanced="balanced",
-    #     positive_class_label="Disease",
-    # )
+    main(
+        datasource="sun et al",
+        algorithm="RandomForestClassifier",
+        abundance_file="mpa4_species_profile_preprocessed.csv",
+        metadata_file="sample_group_species_preprocessed.csv",
+        study="QinN_2014",
+        train_k_shot=10,
+        balanced_or_unbalanced="balanced",
+        positive_class_label="Disease",
+    )

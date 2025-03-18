@@ -43,7 +43,7 @@ def get_setup(model_name, with_oversampling=True):
         "type": ShuffleSplit,
         "params": {
             "n_splits": n_inner_splits,
-            "test_size": 0.2,
+            "test_size": 1,
         },  # don't provide random_state, as we want to change it per outer fold
     }
 
