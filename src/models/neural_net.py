@@ -121,18 +121,15 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
         self.model.to(self.device, dtype=float)
         self.model.train()
 
-        X_batch = tensor(np.array(X)).to(self.device, dtype=float)
-        y_batch = tensor(np.array(y)).to(self.device, dtype=float)
-
-        dataset = TensorDataset(X_batch, y_batch)
+        dataset = TensorDataset(tensor(np.array(X)), tensor(np.array(y)))
         sampler = RandomSampler(dataset)
-        dataloader = DataLoader(dataset, sampler=sampler, batch_size=self.batch_size)
+        dataloader = DataLoader(dataset, sampler=sampler, batch_size=self.batch_size, drop_last=True)
         if self.X_eval is not None and self.y_eval is not None:
-            self.X_eval = tensor(np.array(self.X_eval)).to(self.device, dtype=float)
-            self.y_eval = tensor(np.array(self.y_eval)).to(self.device, dtype=float)
+            dataset = TensorDataset(tensor(np.array(self.X_eval)), tensor(np.array(self.y_eval)))
             val_dataloader = DataLoader(
-                TensorDataset(self.X_eval, self.y_eval),
+                dataset,
                 batch_size=self.batch_size,
+                sampler=SequentialSampler(dataset),
                 shuffle=False,
             )
 
@@ -173,6 +170,9 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
             all_targets = []
 
             for X_batch, y_batch in dataloader:
+                X_batch = X_batch.to(self.device, dtype=float)
+                y_batch = y_batch.to(self.device, dtype=float)
+                
                 optimizer.zero_grad()
 
                 logits = self.model(X_batch).view(-1)
@@ -223,6 +223,7 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
 
         with no_grad():
             for (X_batch,) in dataloader:
+                X_batch = X_batch.to(self.device, dtype=float)
                 logits = self.model(X_batch).squeeze()
                 probs = sigmoid(logits)
                 if probs.shape:
@@ -251,6 +252,8 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
 
         with no_grad():
             for X_batch, y_batch in dataloader:
+                X_batch = X_batch.to(self.device, dtype=float)
+                y_batch = y_batch.to(self.device, dtype=float)
                 # Forward pass
                 logits = self.model(X_batch).view(-1)
                 loss = loss_fn(logits, y_batch.view(-1))
