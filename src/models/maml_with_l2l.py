@@ -2,6 +2,7 @@ from loguru import logger
 from torch import cat as torch_cat
 from torch import device as torch_device
 from torch import nn, no_grad
+from torch import save as torch_save
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import SGD
 from torch.utils.data import DataLoader
@@ -12,7 +13,6 @@ import wandb
 from src.data.helper_functions import metalearning_binary_target_changer
 from src.models.helper_functions import batch_tasks, set_learning_rate
 from src.scoring.metalearning_scoring_fn import compute_metrics
-from torch import save as torch_save
 
 
 class MAML:
@@ -52,9 +52,37 @@ class MAML:
         self.outer_optimizer = None
         self.current_epoch = 0
 
+    def _log_gradients(self, epoch, score_name_prefix):
+        """Log gradient statistics to wandb"""
+        if (epoch + 1) % 10 == 0:
+            with no_grad():
+                for name, param in self.model.named_parameters():
+                    if param.grad is not None:
+                        # Log gradient statistics
+                        gradient_log = {
+                            f"{score_name_prefix}gradients/{name}_norm": param.grad.norm().item(),
+                            f"{score_name_prefix}gradients/{name}_mean": param.grad.mean().item(),
+                            f"{score_name_prefix}gradients/{name}_max": param.grad.max().item(),
+                            f"{score_name_prefix}gradients/{name}_min": param.grad.min().item(),
+                            f"{score_name_prefix}gradients/{name}_histogram": wandb.Histogram(
+                                param.grad.detach().cpu().numpy().flatten()
+                            ),
+                            "epoch": epoch + 1,
+                        }
+
+                        # Only calculate std if there are at least 2 elements
+                        if param.grad.numel() > 1:
+                            gradient_log[f"{score_name_prefix}gradients/{name}_std"] = (
+                                param.grad.std().item()
+                            )
+
+                        wandb.log(gradient_log)
+
     def initialize_optimizer(self):
         """Initialize or reset the optimizer with current learning rate"""
-        self.outer_optimizer = SGD(self.maml.parameters(), self.outer_lr, weight_decay=self.weight_decay)
+        self.outer_optimizer = SGD(
+            self.maml.parameters(), self.outer_lr, weight_decay=self.weight_decay
+        )
         return self.outer_optimizer
 
     def update_learning_rates(self, epoch, total_epochs):
@@ -66,7 +94,7 @@ class MAML:
             set_learning_rate(self.outer_optimizer, self.outer_lr)
         return self.outer_lr
 
-    def train_step(self, batch, n_parallel_tasks=1):
+    def train_step(self, batch, n_parallel_tasks=1, score_name_prefix=None):
         """Perform a single training step on a batch of tasks"""
         if self.outer_optimizer is None:
             self.initialize_optimizer()
@@ -112,6 +140,7 @@ class MAML:
             predictions = learner(X_query).squeeze()
             evaluation_error = self.loss_fn(predictions, y_query)
             evaluation_error.backward()
+            self._log_gradients(self.current_epoch, score_name_prefix or "")
             meta_train_error += evaluation_error.item()
 
             predictions_all.append(predictions.detach().cpu())
@@ -257,7 +286,9 @@ class MAML:
                         # Save the best model
                         if save_best_model_path:
                             torch_save(self, save_best_model_path)
-                            logger.info(f"Saved new best model with {early_stopping_metric} = {current_metric:.4f}")
+                            logger.info(
+                                f"Saved new best model with {early_stopping_metric} = {current_metric:.4f}"
+                            )
                     else:
                         patience_counter += 1
 
@@ -276,7 +307,7 @@ class MAML:
                 train_dataloader, n_parallel_tasks
             )  # TODO batch size is wrong right?
             for i, batch in enumerate(batches):
-                result = self.train_step(batch, n_parallel_tasks)
+                result = self.train_step(batch, n_parallel_tasks, score_name_prefix)
                 # getting results like this, gets result of different model every iteration. So better to do after a whole epoch
                 # if result:
                 #     batch_count += 1
@@ -300,7 +331,10 @@ class MAML:
 
         # Validation phase
         val_result = self.evaluate(
-            eval_dataloader, f"{score_name_prefix}{val_or_test}", n_epochs, log_metrics=log_metrics
+            eval_dataloader,
+            f"{score_name_prefix}{val_or_test}",
+            n_epochs,
+            log_metrics=log_metrics,
         )
 
         return train_results, val_result
