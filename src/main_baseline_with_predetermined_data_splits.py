@@ -247,11 +247,12 @@ def main(
 
     for i, test_support_set in test_loop_data_selection.items():
         # Get train and test data
-        test_data = data.loc[test_support_set]
-        test_labels = encoded_labels.loc[test_data.index]
-        train_data = data.drop(test_data.index)
-        train_labels = encoded_labels.drop(test_data.index)
+        train_data = data.loc[test_support_set]
+        train_labels = encoded_labels.loc[train_data.index]
+        test_data = data.drop(train_data.index)
+        test_labels = encoded_labels.drop(train_data.index)
         # Make sure the labels are in the same order as the data
+        test_labels = test_labels.loc[test_data.index]
         train_labels = train_labels.loc[train_data.index]
 
         # With random state defined like this, each experiment is reproducible but the inner cv splits are different per outer cv split
