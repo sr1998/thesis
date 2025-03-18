@@ -123,9 +123,13 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
 
         dataset = TensorDataset(tensor(np.array(X)), tensor(np.array(y)))
         sampler = RandomSampler(dataset)
-        dataloader = DataLoader(dataset, sampler=sampler, batch_size=self.batch_size, drop_last=True)
+        dataloader = DataLoader(
+            dataset, sampler=sampler, batch_size=self.batch_size, drop_last=True
+        )
         if self.X_eval is not None and self.y_eval is not None:
-            dataset = TensorDataset(tensor(np.array(self.X_eval)), tensor(np.array(self.y_eval)))
+            dataset = TensorDataset(
+                tensor(np.array(self.X_eval)), tensor(np.array(self.y_eval))
+            )
             val_dataloader = DataLoader(
                 dataset,
                 batch_size=self.batch_size,
@@ -172,7 +176,7 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
             for X_batch, y_batch in dataloader:
                 X_batch = X_batch.to(self.device, dtype=float)
                 y_batch = y_batch.to(self.device, dtype=float)
-                
+
                 optimizer.zero_grad()
 
                 logits = self.model(X_batch).view(-1)
@@ -184,7 +188,7 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
                 all_targets.append(y_batch.view(-1).detach())
 
                 loss.backward()
-                
+
                 self._log_gradients(epoch, score_name_prefix)
 
                 optimizer.step()
@@ -212,24 +216,37 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
             raise RuntimeError("Model has not been fitted yet")
 
         X = tensor(np.array(X))
-        X = X.to(self.device, dtype=float)
-        dataset = TensorDataset(X)
-        sampler = SequentialSampler(dataset)
-        dataloader = DataLoader(dataset, sampler=sampler, batch_size=self.batch_size)
 
-        # Prediction
-        self.model.eval()
+        # Check if the model contains BatchNorm layers
+        has_batchnorm = any(
+            isinstance(m, nn.BatchNorm1d) or isinstance(m, nn.BatchNorm2d)
+            for m in self.model.modules()
+        )
+
+        # Process data in batches, handling batch sizes of 1 specially for BatchNorm if needed
         all_probs = []
-
         with no_grad():
-            for (X_batch,) in dataloader:
+            for i in range(0, len(X), self.batch_size):
+                end = min(i + self.batch_size, len(X))
+                X_batch = X[i:end]
                 X_batch = X_batch.to(self.device, dtype=float)
-                logits = self.model(X_batch).squeeze()
-                probs = sigmoid(logits)
-                if probs.shape:
-                    all_probs.extend(probs.cpu().numpy().tolist())
+
+                # If batch size is 1 and we have BatchNorm, duplicate to create batch of size 2
+                if has_batchnorm and X_batch.size(0) == 1:
+                    X_batch = X_batch.repeat(2, 1)
+                    logits = self.model(X_batch).squeeze()
+                    # Take only the first (original) sample's prediction
+                    prob = sigmoid(logits[0])
+                    all_probs.append(prob.item())
                 else:
-                    all_probs.append(probs.item())
+                    logits = self.model(X_batch).squeeze()
+                    probs = sigmoid(logits)
+
+                    # Handle different output shapes
+                    if probs.ndim == 0:  # Single tensor scalar
+                        all_probs.append(probs.item())
+                    else:  # Multiple values
+                        all_probs.extend(probs.cpu().numpy().tolist())
 
         # Format as scikit-learn compatible 2D array with columns [prob_class_0, prob_class_1]
         all_probs = np.array(all_probs)
