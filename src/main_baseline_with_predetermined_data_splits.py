@@ -436,15 +436,15 @@ def main(
 
 
 if __name__ == "__main__":
-    # fire.Fire(main)
+    fire.Fire(main)
 
-    main(
-        datasource="sun et al",
-        algorithm="RandomForestClassifier",
-        abundance_file="mpa4_species_profile_preprocessed.csv",
-        metadata_file="sample_group_species_preprocessed.csv",
-        study="QinN_2014",
-        train_k_shot=10,
-        balanced_or_unbalanced="balanced",
-        positive_class_label="Disease",
-    )
+    # main(
+    #     datasource="sun et al",
+    #     algorithm="RandomForestClassifier",
+    #     abundance_file="mpa4_species_profile_preprocessed.csv",
+    #     metadata_file="sample_group_species_preprocessed.csv",
+    #     study="QinN_2014",
+    #     train_k_shot=10,
+    #     balanced_or_unbalanced="balanced",
+    #     positive_class_label="Disease",
+    # )
