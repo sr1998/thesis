@@ -1,6 +1,8 @@
 from functools import partial
+import os
 from imblearn.ensemble import BalancedRandomForestClassifier
 from imblearn.over_sampling import SMOTE
+from loguru import logger
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.calibration import LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
@@ -10,6 +12,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import ShuffleSplit
 from sklearn.preprocessing import Normalizer
+from tabpfn import TabPFNClassifier
 from xgboost import XGBClassifier
 
 import run_configs.optuna_search_space_samplers as sss
@@ -22,7 +25,7 @@ def get_setup(model_name, with_oversampling=True):
     misc_config = {
         "wandb": True,  # whether to use wandb or not
         "wandb_params": {
-            "project": "baseline",
+            "project": "all_data_baseline",
             "group": model_name,  # model name can be useful here
         },
         "verbose_pipeline": True,  # whether to print verbose output from the pipeline
@@ -30,9 +33,9 @@ def get_setup(model_name, with_oversampling=True):
     }
 
     # outer_cv = ShuffleSplit(n_splits=5, test_size=0.2, random_state=42)
-    n_outer_splits = 10
+    n_outer_splits = 100
     n_inner_splits = 3
-    tuning_num_samples = 50
+    tuning_num_samples = 30
 
     outer_cv_config = {
         "type": ShuffleSplit,
@@ -64,12 +67,16 @@ def get_setup(model_name, with_oversampling=True):
         raise ValueError(
             "BalancedRandomForestClassifier should not be used with oversampling"
         )
+    
+    n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
+    logger.info(f"n_cpus found:{n_cpus}")
 
     model = {
-        "RandomForestClassifier": RandomForestClassifier(),
-        "XGBoost": XGBClassifier(),
+        "RandomForestClassifier": RandomForestClassifier(n_jobs=n_cpus),
+        "XGBoost": XGBClassifier(n_jobs=n_cpus),
         "NeuralNet": NeuralNetWrapper(),
-        "BalancedRandomForestClassifier": BalancedRandomForestClassifier(),
+        "BalancedRandomForestClassifier": BalancedRandomForestClassifier(n_jobs=n_cpus),
+        "TabPFN": TabPFNClassifier(memory_saving_mode=False, n_jobs=n_cpus, ignore_pretraining_limits=True),
     }[model_name]
 
     standard_pipeline = create_pipeline(
