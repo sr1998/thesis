@@ -252,7 +252,6 @@ def main(
                     config,
                     early_stop_pat=early_stop_patience,
                     early_stop_metric=early_stop_metric,
-                    track_best_f1=track_best_f1,
                 ),
                 n_trials=remaining_trials,
                 callbacks=[optuna_wandb_callback],
