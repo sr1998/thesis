@@ -60,6 +60,7 @@ def main(
     early_stop_patience: int = None,
     early_stop_metric: str = "loss",
     resume: bool = True,
+    track_best_f1: bool = True,
 ):
     config_script = "run_configs.metalearning"
     config_module = import_module(config_script)
@@ -186,6 +187,7 @@ def main(
         "array_job_id": array_job_id,
         "array_task_id": array_task_id,
         "resume": resume,
+        "track_best_f1": track_best_f1,
     }
 
     # Initialize wandb if enabled
@@ -250,6 +252,7 @@ def main(
                     config,
                     early_stop_pat=early_stop_patience,
                     early_stop_metric=early_stop_metric,
+                    track_best_f1=track_best_f1,
                 ),
                 n_trials=remaining_trials,
                 callbacks=[optuna_wandb_callback],
@@ -319,7 +322,7 @@ def main(
                 log_metrics=True,
                 score_name_prefix=f"outer_fold_{i}_fit",
                 save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
-                track_best_f1=True,
+                track_best_f1=track_best_f1,
             )
 
             train_res = {
