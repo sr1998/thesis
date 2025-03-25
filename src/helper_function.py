@@ -19,6 +19,7 @@ from sklearn.model_selection import cross_validate
 
 import wandb
 from joblib import Memory
+import yaml
 from src.global_vars import (
     BASE_RUN_DIR,
     HTTP_ADAPTER_FOR_REQUESTS,
@@ -574,11 +575,30 @@ def optuna_wandb_callback(study, trial, outer_cv_step: int | None = None):
 
 def check_run_finished(project_name, run_name, entity_name="shayan000"):
     api = wandb.Api()
-    runs = api.runs(f"{entity_name}/{project_name}", filters={"display_name": run_name})
+    runs = api.runs(f"{entity_name}/{project_name}")
 
     for run in runs:
-        if run.state == "finished":
+        if run_name[:-10] in run.name and run.state == "finished":
             print(f"Run '{run_name}' exists and is finished. Stopping script.")
             exit(0)
 
     print(f"No finished run named '{run_name}' found. Continuing...")
+
+
+def load_checkpoint(checkpoint_path):
+    """Load checkpoint data or create empty checkpoint if none exists."""
+    if os.path.exists(checkpoint_path):
+        with open(checkpoint_path, 'r') as f:
+            return yaml.safe_load(f)
+    return {
+        "completed_folds": [],
+        "optuna_completed": False,
+        "wandb_run_id": None,
+        "fold_metrics": {}
+    }
+
+
+def save_checkpoint(checkpoint_path, checkpoint_data):
+    """Save checkpoint data to disk."""
+    with open(checkpoint_path, 'w') as f:
+        yaml.safe_dump(checkpoint_data, f, default_flow_style=False)
