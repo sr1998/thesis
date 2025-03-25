@@ -3,6 +3,7 @@ from torch import cat as torch_cat
 from torch import device as torch_device
 from torch import nn, no_grad
 from torch import save as torch_save
+from torch import load as torch_load
 from torch.nn import BCEWithLogitsLoss
 from torch.optim import SGD
 from torch.utils.data import DataLoader
@@ -238,6 +239,7 @@ class MAML:
         log_metrics: bool = True,
         score_name_prefix: str = None,
         save_best_model_path: str = None,
+        track_best_f1: bool = True,
     ):
         """Full training loop with optional early stopping"""
         self.maml.train()
@@ -248,6 +250,11 @@ class MAML:
             float("inf") if "loss" in early_stopping_metric else -float("inf")
         )
         patience_counter = 0
+
+        # Best F1 tracking
+        best_f1 = -float("inf")
+        best_f1_epoch = 0
+        best_model_state = None
 
         for epoch in range(n_epochs):
             if epoch % 10 == 0:
@@ -266,6 +273,23 @@ class MAML:
                     epoch,
                     log_metrics=True if epoch % 10 == 0 and log_metrics else False,
                 )
+
+                # Track best F1 score
+                if track_best_f1 and "f1" in val_result and val_result["f1"] > best_f1:
+                    best_f1 = val_result["f1"]
+                    best_f1_epoch = epoch
+                    
+                    # Save model state with best F1
+                    if save_best_model_path:
+                        best_model_state = {
+                            'model_state_dict': self.model.state_dict(),
+                            'maml_state_dict': self.maml.state_dict(),
+                            'epoch': epoch,
+                            'f1_score': best_f1
+                        }
+                        torch_save(best_model_state, save_best_model_path + ".best_f1")
+                        logger.info(f"Saved new best F1 model with F1 = {best_f1:.4f} at epoch {epoch+1}")
+
 
                 # Early stopping check
                 if early_stopping_patience:
@@ -336,6 +360,28 @@ class MAML:
             n_epochs,
             log_metrics=log_metrics,
         )
+
+        # Include best F1 information in results WITHOUT overriding original f1
+        if track_best_f1:
+            val_result["best_f1"] = best_f1
+            val_result["best_f1_epoch"] = best_f1_epoch
+            
+            # Log the best F1 separately
+            if log_metrics:
+                import wandb
+                wandb.log({
+                    f"{score_name_prefix}{val_or_test}/best_f1": best_f1,
+                    f"{score_name_prefix}{val_or_test}/best_f1_epoch": best_f1_epoch,
+                    "epoch": n_epochs  # Log at final epoch
+                })
+
+        # Load best F1 model if requested (for future use)
+        if track_best_f1 and best_model_state and save_best_model_path:
+            import torch
+            best_model_checkpoint = torch.load(save_best_model_path + ".best_f1")
+            self.model.load_state_dict(best_model_checkpoint['model_state_dict'])
+            self.maml.load_state_dict(best_model_checkpoint['maml_state_dict'])
+            logger.info(f"Loaded best F1 model from epoch {best_f1_epoch+1}")
 
         return train_results, val_result
 

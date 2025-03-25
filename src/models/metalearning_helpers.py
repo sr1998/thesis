@@ -200,6 +200,7 @@ def hyp_param_val_for_metalearning(
             early_stopping_patience=early_stop_pat,
             early_stopping_metric=early_stop_metric,
             log_metrics=False,  # Disable wandb logging during optimization
+            track_best_f1=extra_configs["track_best_f1"],
         )
 
         # update keys to include train and val prefixes
@@ -264,5 +265,11 @@ def hyp_param_val_for_metalearning(
     )
     logger.debug(
         f"trial best scorer scores:\n{cross_val_results["val/" + extra_configs["best_fit_scorer"]]}"
+    )
+
+    best_scorer_name = "val/best_" + extra_configs["best_fit_scorer"]
+    best_scorer_name = best_scorer_name if best_scorer_name in cross_val_results else "val/" + extra_configs["best_fit_scorer"]
+    logger.debug(
+        f"trial best scorer name: {best_scorer_name}"
     )
     return np.mean(cross_val_results["val/" + extra_configs["best_fit_scorer"]])
