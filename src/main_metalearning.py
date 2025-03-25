@@ -12,7 +12,9 @@ from src.data.dataloader import (
 )
 from src.helper_function import (
     get_run_dir_for_experiment,
+    load_checkpoint,
     optuna_wandb_callback,
+    save_checkpoint,
 )
 from src.models.metalearning_helpers import (
     get_metalearning_model_from_trial,
@@ -57,6 +59,7 @@ def main(
     features_to_use: list[str] = None,
     early_stop_patience: int = None,
     early_stop_metric: str = "loss",
+    resume: bool = True,
 ):
     config_script = "run_configs.metalearning"
     config_module = import_module(config_script)
@@ -125,6 +128,29 @@ def main(
     array_job_id = os.getenv("SLURM_ARRAY_JOB_ID")
     array_task_id = os.getenv("SLURM_ARRAY_TASK_ID")
     tax_level = abundance_file.split("_")[1]
+    
+    wandb_base_tags = [
+        str(test_study),
+        algorithm,
+        tax_level,
+        str(train_k_shot) + "_shot",
+        datasource,
+        balanced_or_unbalanced,
+        # "e_k" + str(eval_k_shot),
+    ]
+
+    wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_{array_job_id or job_id}"
+    run_dir = get_run_dir_for_experiment("metalearning", algorithm, test_study, wandb_name)
+
+    # Set up checkpoint path and load checkpoint if resuming
+    checkpoint_path = run_dir / "checkpoint.yaml"
+    checkpoint = load_checkpoint(checkpoint_path) if resume else {
+        "completed_folds": [],
+        "optuna_completed": False,
+        "wandb_run_id": None,
+        "fold_metrics": {}
+    }
+
     config = {
         # "model_name": model_name,
         "datasource": datasource,
@@ -159,20 +185,8 @@ def main(
         "job_id": job_id,
         "array_job_id": array_job_id,
         "array_task_id": array_task_id,
-        
+        "resume": resume,
     }
-    wandb_base_tags = [
-        str(test_study),
-        algorithm,
-        tax_level,
-        str(train_k_shot) + "_shot",
-        datasource,
-        balanced_or_unbalanced,
-        # "e_k" + str(eval_k_shot),
-    ]
-
-    wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_{array_job_id or job_id}"
-    run_dir = get_run_dir_for_experiment("metalearning", algorithm, test_study, wandb_name)
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -183,6 +197,8 @@ def main(
             notes=str(config),
             group=algorithm,
             tags=wandb_base_tags,
+            id=checkpoint["wandb_run_id"],
+            resume="allow" if resume and checkpoint["wandb_run_id"] else None
         )
     else:
         wandb.init(
@@ -197,127 +213,163 @@ def main(
 
     logger.success("wandb init done")
 
+    # Store wandb run ID in checkpoint
+    if not checkpoint["wandb_run_id"]:
+        checkpoint["wandb_run_id"] = wandb.run.id
+        save_checkpoint(checkpoint_path, checkpoint)
+
     train_scores = []
     test_scores = []
     # split_config = []
+    best_trial = None
 
     if tuning_num_samples > 0:
+        # Create or load Optuna study with SQLite for persistence
+        storage_path = f"sqlite:///{run_dir}/optuna_study.db"
         optuna_study = optuna.create_study(
             direction=tuning_mode,
             study_name=f"hyper-param_optimization_for_{wandb.run.name}",
+            storage=storage_path,
+            load_if_exists=True
         )
-        optuna_study.optimize(
-            lambda trial: hyp_param_val_for_metalearning(
-                algorithm,
-                val_loop_data_selection,
-                train_data,
-                train_metadata,
-                train_k_shot,
-                train_k_shot,
-                search_space_sampler,
-                trial,
-                config,
-                early_stop_pat=early_stop_patience,
-                early_stop_metric=early_stop_metric,
-            ),
-            n_trials=tuning_num_samples,
-            callbacks=[optuna_wandb_callback],
-        )
-        try:
-            fig = plot_param_importances(optuna_study)
-            wandb.log({"param_imp_fig": wandb.Plotly(fig)})
-            param_importance = optuna.importance.get_param_importances(optuna_study)
-            param_importance_df = pd.DataFrame(
-                {
-                    "Parameter": list(param_importance.keys()),
-                    "Importance": list(param_importance.values()),
-                }
+
+        remaining_trials = tuning_num_samples - len(optuna_study.trials)
+
+        if remaining_trials > 0 and not checkpoint["optuna_completed"]:
+            logger.info(f"Remaining trials: {remaining_trials}")
+            optuna_study.optimize(
+                lambda trial: hyp_param_val_for_metalearning(
+                    algorithm,
+                    val_loop_data_selection,
+                    train_data,
+                    train_metadata,
+                    train_k_shot,
+                    train_k_shot,
+                    search_space_sampler,
+                    trial,
+                    config,
+                    early_stop_pat=early_stop_patience,
+                    early_stop_metric=early_stop_metric,
+                ),
+                n_trials=remaining_trials,
+                callbacks=[optuna_wandb_callback],
             )
-            # wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
-            param_importance_df.to_csv(
-                run_dir / "param_importance.csv", index=False
-            )
-        except Exception as e:
-            traceback.print_exc()
-            logger.error(f"Error in plotting param importance: {e}")
+            try:
+                fig = plot_param_importances(optuna_study)
+                wandb.log({"param_imp_fig": wandb.Plotly(fig)})
+                param_importance = optuna.importance.get_param_importances(optuna_study)
+                param_importance_df = pd.DataFrame(
+                    {
+                        "Parameter": list(param_importance.keys()),
+                        "Importance": list(param_importance.values()),
+                    }
+                )
+                # wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
+                param_importance_df.to_csv(
+                    run_dir / "param_importance.csv", index=False
+                )
+            except Exception as e:
+                traceback.print_exc()
+                logger.error(f"Error in plotting param importance: {e}")
+
+        best_trial = optuna_study.best_trial
+        best_trial_params = best_trial.params
+        best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+
+    best_trial_config = search_space_sampler(best_trial)
 
     for i, test_support_set in test_loop_data_selection.items():
-        if tuning_num_samples > 0:
-            best_trial = optuna_study.best_trial
-            # save best trial parameters + split for this loop
-            best_trial_params = best_trial.params
-            best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
-        else:
-            best_trial = None
-        # split_config.append(
-        #     {
-        #         "outer_cv_split": i,
-        #         **best_trial_params,
-        #     }
-        # )
+        fold_id = str(i)
 
-        # Train the best model
-        best_trial_config = search_space_sampler(best_trial)
-        best_model, train_loader, test_loader = get_metalearning_model_from_trial(
-            train_data,
-            test_data,
-            train_metadata,
-            test_metadata,
-            train_k_shot,
-            train_k_shot,
-            test_support_set,
-            algorithm,
-            best_trial_config,
-            config,
-        )
+        if fold_id in checkpoint["completed_folds"]:
+            logger.info(f"Skipping already completed fold {i}")
+            
+            # Load saved metrics
+            if fold_id in checkpoint["fold_metrics"]:
+                train_scores.append(checkpoint["fold_metrics"][fold_id]["train"])
+                test_scores.append(checkpoint["fold_metrics"][fold_id]["test"])
+            continue
 
-        train_res, test_res = best_model.fit(
-            train_dataloader=train_loader,
-            n_epochs=int(
-                best_trial.user_attrs["actual_epochs"]
-            ), # 10% more epochs
-            n_parallel_tasks=n_parallel_tasks,
-            eval_dataloader=test_loader,
-            val_or_test="test",
-            log_metrics=True,
-            score_name_prefix=f"outer_fold_{i}_fit",
-            save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
-        )
+        logger.info(f"Processing outer CV fold {i}")
 
-        train_res = {
-            k: v for k, v in train_res.items() if k != "predictions" and k != "targets"
-        } if train_res else {}
-        test_res = {
-            k: v for k, v in test_res.items() if k != "predictions" and k != "targets"
-        }
+        try:
+            # Train the best model
+            best_trial_config = search_space_sampler(best_trial)
+            best_model, train_loader, test_loader = get_metalearning_model_from_trial(
+                train_data,
+                test_data,
+                train_metadata,
+                test_metadata,
+                train_k_shot,
+                train_k_shot,
+                test_support_set,
+                algorithm,
+                best_trial_config,
+                config,
+            )
 
-        train_scores.append(train_res)
-        test_scores.append(test_res)
+            n_epochs = int(best_trial.user_attrs["actual_epochs"]) if best_trial and "actual_epochs" in best_trial.user_attrs else 100
+
+            train_res, test_res = best_model.fit(
+                train_dataloader=train_loader,
+                n_epochs=n_epochs,
+                n_parallel_tasks=n_parallel_tasks,
+                eval_dataloader=test_loader,
+                val_or_test="test",
+                log_metrics=True,
+                score_name_prefix=f"outer_fold_{i}_fit",
+                save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
+            )
+
+            train_res = {
+                k: v for k, v in train_res.items() if k != "predictions" and k != "targets"
+            } if train_res else {}
+            test_res = {
+                k: v for k, v in test_res.items() if k != "predictions" and k != "targets"
+            }
+
+            train_scores.append(train_res)
+            test_scores.append(test_res)
+
+            # Update checkpoint
+            checkpoint["completed_folds"].append(fold_id)
+            if "fold_metrics" not in checkpoint:
+                checkpoint["fold_metrics"] = {}
+            checkpoint["fold_metrics"][fold_id] = {"train": train_res, "test": test_res}
+            save_checkpoint(checkpoint_path, checkpoint)
+
+        except Exception as e:
+            logger.error(f"Error in outer CV fold {i}: {e}")
+            traceback.print_exc()
+            # Save checkpoint without marking this fold as complete
+            save_checkpoint(checkpoint_path, checkpoint)
+            raise e
 
     # log overall results to wandb
-    train_scores = pd.DataFrame(train_scores)
-    test_scores = pd.DataFrame(test_scores)
-    train_mean = train_scores.mean() if not train_scores.empty else pd.Series()
-    test_mean = test_scores.mean()
-    train_std = train_scores.std() if not train_scores.empty else pd.Series()
-    test_std = test_scores.std()
+    if test_scores:
+        train_scores = pd.DataFrame(train_scores)
+        test_scores = pd.DataFrame(test_scores)
+        train_mean = train_scores.mean() if not train_scores.empty else pd.Series()
+        test_mean = test_scores.mean()
+        train_std = train_scores.std() if not train_scores.empty else pd.Series()
+        test_std = test_scores.std()
 
-    # Log bar plots for train and test metrics
-    train_summary_df = pd.DataFrame(
-        {"Metric": train_mean.index, "Mean": train_mean.values, "Std": train_std.values}
-    ) if not train_scores.empty else pd.DataFrame()
+        # Log bar plots for train and test metrics
+        train_summary_df = pd.DataFrame(
+            {"Metric": train_mean.index, "Mean": train_mean.values, "Std": train_std.values}
+        ) if not train_scores.empty else pd.DataFrame()
 
-    test_summary_df = pd.DataFrame(
-        {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
-    )
-
-    if not train_summary_df.empty:
-        # wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
-        train_summary_df.to_csv(
-            run_dir / "train_metrics_summary.csv", index=False
+        test_summary_df = pd.DataFrame(
+            {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
         )
-    # wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
-    test_summary_df.to_csv(run_dir / "test_metrics_summary.csv", index=False)
+
+        if not train_summary_df.empty:
+            # wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
+            train_summary_df.to_csv(
+                run_dir / "train_metrics_summary.csv", index=False
+            )
+        # wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
+        test_summary_df.to_csv(run_dir / "test_metrics_summary.csv", index=False)
 
     # Save all outer CV splits and best trial parameters
     # results_df = pd.DataFrame(split_config)
