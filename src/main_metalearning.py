@@ -144,7 +144,8 @@ def main(
 
     wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}"
     # Set up checkpoint path and load checkpoint if resuming
-    checkpoint_path = get_resume_dir_for_experiment("metalearning", algorithm, test_study, wandb_name) / "checkpoint.yaml"
+    resume_dir = get_resume_dir_for_experiment("metalearning", algorithm, test_study, wandb_name)
+    checkpoint_path = resume_dir / "checkpoint.yaml"
     checkpoint = load_checkpoint(checkpoint_path) if resume else {
         "completed_folds": [],
         "optuna_completed": False,
@@ -152,7 +153,7 @@ def main(
         "fold_metrics": {}
     }
 
-    wandb_name += "_{array_job_id or job_id}"
+    wandb_name += f"_{array_job_id or job_id}"
     run_dir = get_run_dir_for_experiment("metalearning", algorithm, test_study, wandb_name)
 
     config = {
@@ -233,7 +234,7 @@ def main(
 
     if tuning_num_samples > 0:
         # Create or load Optuna study with SQLite for persistence
-        storage_path = f"sqlite:///{run_dir}/optuna_study.db"
+        storage_path = f"sqlite:///{resume_dir}/optuna_study.db"
         optuna_study = optuna.create_study(
             direction=tuning_mode,
             study_name=f"hyper-param_optimization_for_{wandb.run.name}",
