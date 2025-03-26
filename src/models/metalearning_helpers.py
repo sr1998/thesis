@@ -5,12 +5,13 @@ import numpy as np
 import optuna
 import pandas as pd
 from loguru import logger
+from sklearn.calibration import LabelEncoder
 from sklearn.preprocessing import Normalizer
 from torch.utils.data import DataLoader
 
 import wandb
 from src.data.sun_et_al import BinaryFewShotBatchSampler, KShotBatchSampler, LabelOnlyDataset, MicrobiomeDataset
-from src.helper_function import column_rename_for_sun_et_al_metadata, df_str_for_loguru
+from src.helper_function import column_rename_for_sun_et_al_metadata, df_str_for_loguru, encode_labels
 from src.models import maml_with_l2l, reptile_with_l2l
 from src.models.models import HighlyFlexibleModel
 
@@ -70,9 +71,11 @@ def get_metalearning_model_from_trial(
         train_metadata = train_metadata.loc[train_data.index]
         eval_metadata = eval_metadata.loc[eval_data.index]
 
+        train_labels = encode_labels(LabelEncoder(), train_metadata["label"], extra_configs["positive_class_label"])
+        eval_labels = encode_labels(LabelEncoder(), eval_metadata["label"], extra_configs["positive_class_label"])
 
-        train_dataset = LabelOnlyDataset(train_data, train_metadata["label"])
-        eval_dataset = LabelOnlyDataset(eval_data, eval_metadata["label"])
+        train_dataset = LabelOnlyDataset(train_data.values, train_labels.values)
+        eval_dataset = LabelOnlyDataset(eval_data.values, eval_labels.values)
         train_sampler = KShotBatchSampler(train_dataset, train_k_shot, include_query=True)
         eval_sampler = KShotBatchSampler(eval_dataset, train_k_shot, include_query=True, query_size="rest", shuffle=False)
         train_loader = DataLoader(

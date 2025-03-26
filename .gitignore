@@ -7,6 +7,10 @@ random_tests/longitudinal checks (not fully done)
 wandb/
 runs/
 joblib/
+checkpoints/
+*.jpg
+*.jpeg
+*.png
 *.code-workspace
 slurm-*.err
 slurm-*.out

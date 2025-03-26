@@ -288,7 +288,7 @@ class KShotBatchSampler(Sampler):
         dataset: LabelOnlyDataset,
         k_shot: int,
         include_query: bool = True,
-        query_size: int | str = None,
+        query_size: int = 0,
         shuffle: bool = True,
     ):
         """Initialize the KShotBatchSampler.
@@ -305,8 +305,8 @@ class KShotBatchSampler(Sampler):
         self.k_shot = k_shot
         self.include_query = include_query
         self.use_all_remaining = query_size == "rest"
-        self.query_size = query_size if not self.use_all_remaining else None
-        if self.query_size is None and not self.use_all_remaining:
+        self.query_size = query_size if not self.use_all_remaining else 0
+        if self.query_size == 0 and not self.use_all_remaining:
             self.query_size = k_shot
         self.shuffle = shuffle
         

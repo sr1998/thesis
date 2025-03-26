@@ -63,6 +63,7 @@ def main(
     early_stop_metric: str = "loss",
     resume: bool = True,
     track_best_f1: bool = True,
+    positive_class_label: str | None = None,
 ):
     config_script = "run_configs.metalearning"
     config_module = import_module(config_script)
@@ -195,6 +196,7 @@ def main(
         "splitting_method": splitting_method,
         "early_stop_patience": early_stop_patience,
         "early_stop_metric": early_stop_metric,
+        "positive_class_label": positive_class_label,
     }
 
     # Initialize wandb if enabled
@@ -411,4 +413,5 @@ if __name__ == "__main__":
     #     train_k_shot=10,
     #     use_wandb=False,
     #     resume=False,
+    #     positive_class_label="Disease",
     # )
