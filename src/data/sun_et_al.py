@@ -108,7 +108,26 @@ class MicrobiomeDataset(Dataset):
         if self.target_transform:
             labels = self.target_transform(labels)
 
-        return samples, labels
+        return samples, 
+
+    # def __getitems__(self, indices: list[int]) -> list[tensor, tensor]:
+    #     """Returns the samples and labels at the given indices with the transformations applied.
+        
+    #      To be used with collate_fn lambda x: x
+
+    #     Args:
+    #         indices (list[int]): The indices of the samples and labels to return.
+
+    #     """
+    #     samples = self.samples[indices]
+    #     labels = self.labels[indices]
+    #     if self.transform:
+    #         samples = self.transform(samples)
+
+    #     if self.target_transform:
+    #         labels = self.target_transform(labels)
+
+    #     return [samples, labels]
 
 
 class BinaryFewShotBatchSampler(Sampler[list[int]]):
@@ -261,7 +280,8 @@ class LabelOnlyDataset(Dataset):
         return sample, label
 
 class KShotBatchSampler(Sampler):
-    """K-shot batch sampler that creates batches with k samples from each class."""
+    """K-shot batch sampler that creates batches with k samples from each class,
+    undersampling the larger class during training."""
 
     def __init__(
         self,
@@ -290,13 +310,18 @@ class KShotBatchSampler(Sampler):
             self.query_size = k_shot
         self.shuffle = shuffle
         
-        # Check if we have enough samples per class
+        # Check if we have enough samples per class for k_shot
         for label, indices in self.dataset.indices_by_label.items():
-            min_required = k_shot
-            if include_query and not self.use_all_remaining:
-                min_required += self.query_size
-            if len(indices) < min_required:
-                print(f"Warning: Label {label} has fewer samples ({len(indices)}) than required ({min_required})")
+            if len(indices) < k_shot:
+                raise ValueError(f"Label {label} has fewer samples ({len(indices)}) than required for k_shot ({k_shot})")
+        
+        # Check if we have enough samples for both support and query sets during training
+        min_required = k_shot
+        min_required += self.query_size
+        if include_query and not self.use_all_remaining:
+            for label, indices in self.dataset.indices_by_label.items():
+                if len(indices) < min_required:
+                    raise ValueError(f"Label {label} has fewer samples ({len(indices)}) than required for support+query ({min_required})")
 
     def __iter__(self):
         """Yields batches of indices for k-shot sampling with support and query sets."""
@@ -317,7 +342,7 @@ class KShotBatchSampler(Sampler):
             # When using "rest", we can only have 1 batch per full dataset
             n_batches = 1
         else:
-            # Otherwise calculate as before
+            # Otherwise calculate based on smallest class size to ensure undersampling
             samples_per_batch_per_class = self.k_shot
             if self.include_query:
                 samples_per_batch_per_class += self.query_size

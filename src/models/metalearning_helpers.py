@@ -1,4 +1,5 @@
 from math import ceil
+import os
 
 import numpy as np
 import optuna
@@ -8,7 +9,7 @@ from sklearn.preprocessing import Normalizer
 from torch.utils.data import DataLoader
 
 import wandb
-from src.data.sun_et_al import BinaryFewShotBatchSampler, MicrobiomeDataset
+from src.data.sun_et_al import BinaryFewShotBatchSampler, KShotBatchSampler, LabelOnlyDataset, MicrobiomeDataset
 from src.helper_function import column_rename_for_sun_et_al_metadata, df_str_for_loguru
 from src.models import maml_with_l2l, reptile_with_l2l
 from src.models.models import HighlyFlexibleModel
@@ -64,30 +65,59 @@ def get_metalearning_model_from_trial(
     # train_data = train_data.loc[train_metadata_new.index]
     # train_metadata = train_metadata_new
 
-    # Create Datasets for DataLoader
-    train = MicrobiomeDataset(train_data, train_metadata)
-    eval = MicrobiomeDataset(
-        eval_data, eval_metadata, preselected_support_set=eval_support_sets
-    )
+    if extra_configs["splitting_method"] == "normal":
+        # order the metadata by the index of the data just to be sure
+        train_metadata = train_metadata.loc[train_data.index]
+        eval_metadata = eval_metadata.loc[eval_data.index]
 
-    # Create DataLoaders
-    sampler = BinaryFewShotBatchSampler(
-        train,
-        train_k_shot,
-        include_query=True if algorithm == "MAML" else False,
-        shuffle=True,
-    )
-    train_loader = DataLoader(train, batch_sampler=sampler)
 
-    sampler = BinaryFewShotBatchSampler(
-        eval,
-        train_k_shot,
-        include_query=True,
-        shuffle=False,
-        shuffle_once=False,
-        training=False,
-    )
-    eval_loader = DataLoader(eval, batch_sampler=sampler)
+        train_dataset = LabelOnlyDataset(train_data, train_metadata["label"])
+        eval_dataset = LabelOnlyDataset(eval_data, eval_metadata["label"])
+        train_sampler = KShotBatchSampler(train_dataset, train_k_shot, include_query=True)
+        eval_sampler = KShotBatchSampler(eval_dataset, train_k_shot, include_query=True, query_size="rest", shuffle=False)
+        train_loader = DataLoader(
+            train_dataset,
+            batch_sampler=train_sampler,
+            num_workers=0,
+            pin_memory=True,
+        )
+        eval_loader = DataLoader(
+            eval_dataset,
+            batch_sampler=eval_sampler,
+            num_workers=0,
+            pin_memory=True,
+        )
+    elif extra_configs["splitting_method"] == "study_wise":
+        n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
+        # Create Datasets for DataLoader
+        train = MicrobiomeDataset(train_data, train_metadata)
+        eval = MicrobiomeDataset(
+            eval_data, eval_metadata, preselected_support_set=eval_support_sets
+        )
+
+        # Create DataLoaders
+        sampler = BinaryFewShotBatchSampler(
+            train,
+            train_k_shot,
+            include_query=True if algorithm == "MAML" else False,
+            shuffle=True,
+        )
+        train_loader = DataLoader(train, batch_sampler=sampler, num_workers=n_cpus, pin_memory=True)
+
+        sampler = BinaryFewShotBatchSampler(
+            eval,
+            train_k_shot,
+            include_query=True,
+            shuffle=False,
+            shuffle_once=False,
+            training=False,
+        )
+        eval_loader = DataLoader(eval, batch_sampler=sampler, num_workers=n_cpus, pin_memory=True)
+    else:
+        raise ValueError(
+            f"Unknown splitting method: {extra_configs['splitting_method']}"
+        )
+
 
     # Get model
     n_input_features = train_data.shape[1]

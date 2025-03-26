@@ -16,6 +16,7 @@ from src.data.sun_et_al import KShotBatchSampler, LabelOnlyDataset
 from src.global_vars import BASE_DATA_DIR
 from src.helper_function import (
     column_rename_for_sun_et_al_metadata,
+    encode_labels,
     get_run_dir_for_experiment,
 )
 from src.models import maml_with_l2l
@@ -39,6 +40,7 @@ def main(
     n_gradient_steps: int,  # TODO Could be a hyperparam
     n_parallel_tasks: int,  # TODO Could be a hyperparam
     train_k_shot: int,
+    positive_class_label: str,
     # eval_k_shot: int = None,              # skip
     # n_components_reduction_factor: int = 0,  # 0 or 1 for no PCA at all   # skip
     # use_cached_pca: bool = False,         # skip
@@ -49,6 +51,7 @@ def main(
     features_to_use: list[str] = None,
     early_stop_patience: int = None,
     early_stop_metric: str = "loss",
+    track_best_f1: bool = True,
 ):
     config_script = "run_configs.metalearning"
     config_module = import_module(config_script)
@@ -82,9 +85,9 @@ def main(
     )
     sun_et_al_metadata = sun_et_al_metadata.loc[sun_et_al_abundance.index]
 
-    encoded_labels = LabelEncoder().fit_transform(
-        sun_et_al_metadata["Group"]
-    )
+    encoded_labels = encode_labels(
+        LabelEncoder(), sun_et_al_metadata["Group"], positive_class_label=positive_class_label
+    ).values
 
     train_data, test_data, train_labels, test_labels = train_test_split(
         sun_et_al_abundance,
@@ -158,7 +161,7 @@ def main(
     # Initialize wandb if enabled
     if use_wandb:
         wandb.init(
-            project="metalearning",
+            project="overfitting",
             name=wandb_name,
             config=config,
             notes=str(config),
@@ -171,7 +174,7 @@ def main(
             mode="disabled",
             config=config,
             notes=str(config),
-            project="metalearning",
+            project="overfitting",
             group=algorithm,
             tags=wandb_base_tags,
         )
@@ -256,6 +259,7 @@ def main(
         log_metrics=True,
         score_name_prefix="fit",
         save_best_model_path=None,
+        track_best_f1=track_best_f1
     )
 
     train_res = (

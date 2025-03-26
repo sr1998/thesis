@@ -11,6 +11,7 @@ from src.data.dataloader import (
     get_cross_validation_sun_et_al_data_splits,
 )
 from src.helper_function import (
+    get_resume_dir_for_experiment,
     get_run_dir_for_experiment,
     load_checkpoint,
     optuna_wandb_callback,
@@ -49,6 +50,7 @@ def main(
     n_gradient_steps: int,  # TODO Could be a hyperparam
     n_parallel_tasks: int,  # TODO Could be a hyperparam
     train_k_shot: int,
+    splitting_method: str = "normal",  # "normal" or "study_wise"
     # eval_k_shot: int = None,              # skip
     # n_components_reduction_factor: int = 0,  # 0 or 1 for no PCA at all   # skip
     # use_cached_pca: bool = False,         # skip
@@ -140,17 +142,18 @@ def main(
         # "e_k" + str(eval_k_shot),
     ]
 
-    wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_{array_job_id or job_id}"
-    run_dir = get_run_dir_for_experiment("metalearning", algorithm, test_study, wandb_name)
-
+    wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}"
     # Set up checkpoint path and load checkpoint if resuming
-    checkpoint_path = run_dir / "checkpoint.yaml"
+    checkpoint_path = get_resume_dir_for_experiment("metalearning", algorithm, test_study, wandb_name) / "checkpoint.yaml"
     checkpoint = load_checkpoint(checkpoint_path) if resume else {
         "completed_folds": [],
         "optuna_completed": False,
         "wandb_run_id": None,
         "fold_metrics": {}
     }
+
+    wandb_name += "_{array_job_id or job_id}"
+    run_dir = get_run_dir_for_experiment("metalearning", algorithm, test_study, wandb_name)
 
     config = {
         # "model_name": model_name,
@@ -188,6 +191,9 @@ def main(
         "array_task_id": array_task_id,
         "resume": resume,
         "track_best_f1": track_best_f1,
+        "splitting_method": splitting_method,
+        "early_stop_patience": early_stop_patience,
+        "early_stop_metric": early_stop_metric,
     }
 
     # Initialize wandb if enabled
@@ -398,9 +404,10 @@ if __name__ == "__main__":
     #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
     #     test_study="JieZ_2017",
-    #     balanced_or_unbalanced="balanced",
+    #     balanced_or_unbalanced="unbalanced",
     #     n_gradient_steps=5,
     #     n_parallel_tasks=5,
     #     train_k_shot=10,
-    #     use_wandb=True,
+    #     use_wandb=False,
+    #     resume=False,
     # )

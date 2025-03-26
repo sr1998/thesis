@@ -62,14 +62,16 @@ def nn_search_space_sampler(optuna_trial):
     scale_factor_before_training = optuna_trial.suggest_int("scale_factor_before_training", 1, 1001, step=100)
 
     # model__n_epochs = optuna_trial.suggest_int("model__n_epochs", 1, 200)
-    model__batch_size = optuna_trial.suggest_int("model__batch_size", 2, 64, step=2)
-    model__lr = optuna_trial.suggest_float("model__lr", 1e-5, 1e-2, log=True)
+    model__batch_size = optuna_trial.suggest_int("model__batch_size", 8, 64, step=8)
+    model__lr = optuna_trial.suggest_float("model__lr", 1e-5, 1e-2)
     model__num_layers = optuna_trial.suggest_int("model__num_layers", 1, 4)
     model__dropout_rate = optuna_trial.suggest_float("model__dropout_rate", 0.0, 0.7, step=0.1)
-    # model__layer_norm = optuna_trial.suggest_categorical(
-    #     "model__layer_norm", [True, False]
-    # )
-    # model__batch_norm = optuna_trial.suggest_categorical("model__batch_norm", [True, False])
+    model__layer_norm = optuna_trial.suggest_categorical(
+        "model__layer_norm", [True, False]
+    )
+    model__batch_norm = optuna_trial.suggest_categorical("model__batch_norm", [True, False])
+    if model__layer_norm and model__batch_norm:
+        model__batch_norm = False
     # model__activation = optuna_trial.suggest_categorical("model__activation", ["relu", "leaky_relu", "elu", "gelu", "selu"])
     base_size = optuna_trial.suggest_int(
         "model__base_size", 16, 1008, step=32
@@ -104,8 +106,8 @@ def nn_search_space_sampler(optuna_trial):
         "model__num_layers": model__num_layers,
         "model__layer_sizes": model__layer_sizes,
         "model__dropout_rate": model__dropout_rate,
-        "model__layer_norm": False,
-        "model__batch_norm": True,
+        "model__layer_norm": model__layer_norm,
+        "model__batch_norm": model__batch_norm,
         "model__activation": "relu",
     }
 
@@ -143,7 +145,7 @@ def maml_search_space_sampler(optuna_trial):
     )   # Division used with reduction factor
 
     # Training parameters
-    max_epochs = optuna_trial.suggest_int("max_epochs", 10, 300)   # Fixed for now as we use early stopping
+    # max_epochs = optuna_trial.suggest_int("max_epochs", 10, 300)   # Fixed for now as we use early stopping
     # do_normalization_before_scaling = optuna_trial.suggest_categorical(
     #     "do_normalization_before_scaling", [True, False]
     # )
@@ -200,7 +202,7 @@ def maml_search_space_sampler(optuna_trial):
         "inner_lr_range": (0.5, 0.5),  # Same value for now as specified
         "inner_lr_reduction_factor": inner_lr_reduction_factor,
         # Training configuration
-        "max_epochs": max_epochs,
+        "max_epochs": 300,
         "do_normalization_before_scaling": True,
         "scale_factor_before_training": scale_factor_before_training,
         # Model architecture

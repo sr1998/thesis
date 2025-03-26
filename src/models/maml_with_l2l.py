@@ -287,7 +287,7 @@ class MAML:
                             'epoch': epoch,
                             'f1_score': best_f1
                         }
-                        torch_save(best_model_state, save_best_model_path + ".best_f1")
+                        torch_save(best_model_state, str(save_best_model_path) + ".best_f1")
                         logger.info(f"Saved new best F1 model with F1 = {best_f1:.4f} at epoch {epoch+1}")
 
 
@@ -377,8 +377,7 @@ class MAML:
 
         # Load best F1 model if requested (for future use)
         if track_best_f1 and best_model_state and save_best_model_path:
-            import torch
-            best_model_checkpoint = torch.load(save_best_model_path + ".best_f1")
+            best_model_checkpoint = torch_load(str(save_best_model_path) + ".best_f1")
             self.model.load_state_dict(best_model_checkpoint['model_state_dict'])
             self.maml.load_state_dict(best_model_checkpoint['maml_state_dict'])
             logger.info(f"Loaded best F1 model from epoch {best_f1_epoch+1}")

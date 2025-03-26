@@ -7,6 +7,7 @@ import numpy as np
 import optuna
 import pandas as pd
 import plotly.graph_objects as go
+import yaml
 from imblearn.pipeline import Pipeline as ImbPipeline
 from loguru import logger
 from requests import Session as requests_session
@@ -19,8 +20,8 @@ from sklearn.model_selection import cross_validate
 
 import wandb
 from joblib import Memory
-import yaml
 from src.global_vars import (
+    BASE_RESUME_DIR,
     BASE_RUN_DIR,
     HTTP_ADAPTER_FOR_REQUESTS,
 )
@@ -101,6 +102,14 @@ def get_run_dir_for_experiment(job_name: str, algorithm: str, study: str, wandb_
     run_dir = BASE_RUN_DIR / job_name / algorithm / str(study) / wandb_name
     run_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
     return run_dir
+
+
+def get_resume_dir_for_experiment(job_name, algorithm, study, wandb_name_wo_jobid):
+    resum_dir = (
+        BASE_RESUME_DIR / job_name / algorithm / str(study) / wandb_name_wo_jobid
+    )
+    resum_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+    return resum_dir
 
 
 # def get_data_dir_for_experiment(config: dict[str, object]):
@@ -588,17 +597,17 @@ def check_run_finished(project_name, run_name, entity_name="shayan000"):
 def load_checkpoint(checkpoint_path):
     """Load checkpoint data or create empty checkpoint if none exists."""
     if os.path.exists(checkpoint_path):
-        with open(checkpoint_path, 'r') as f:
+        with open(checkpoint_path, "r") as f:
             return yaml.safe_load(f)
     return {
         "completed_folds": [],
         "optuna_completed": False,
         "wandb_run_id": None,
-        "fold_metrics": {}
+        "fold_metrics": {},
     }
 
 
 def save_checkpoint(checkpoint_path, checkpoint_data):
     """Save checkpoint data to disk."""
-    with open(checkpoint_path, 'w') as f:
+    with open(checkpoint_path, "w") as f:
         yaml.safe_dump(checkpoint_data, f, default_flow_style=False)

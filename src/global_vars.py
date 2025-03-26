@@ -15,5 +15,6 @@ PAGE_SIZE = 50
 BASE_DIR = Path(__file__).resolve().parent.parent
 BASE_RUN_DIR = BASE_DIR / "runs"
 BASE_DATA_DIR = BASE_DIR / "data"
+BASE_RESUME_DIR = BASE_DIR / "checkpoints"
 
 RANDOM_STATE = 42
