@@ -200,7 +200,26 @@ def main(
     }
 
     # Initialize wandb if enabled
+    # Initialize wandb if enabled
     if use_wandb:
+        # Update config with previous job IDs if resuming
+        if resume and checkpoint["wandb_run_id"]:
+            # Track job history in config
+            if "job_history" not in config:
+                config["job_history"] = []
+            
+            if job_id or array_job_id:
+                current_job = f"{array_job_id or job_id}"
+                if array_task_id:
+                    current_job += f"_{array_task_id}"
+                
+                # Add current job ID to history
+                config["job_history"].append(current_job)
+                
+                # Update run name to indicate multiple jobs
+                if len(config["job_history"]) > 1:
+                    wandb_name += f"_multi{len(config['job_history'])}"
+        
         wandb.init(
             project="metalearning",
             name=wandb_name,

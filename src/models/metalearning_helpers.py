@@ -298,12 +298,5 @@ def hyp_param_val_for_metalearning(
     )
     best_scorer_name = "val/best_" + extra_configs["best_fit_scorer"]
     best_scorer_name = best_scorer_name if best_scorer_name in cross_val_results else "val/" + extra_configs["best_fit_scorer"]
-    logger.debug(
-        f"trial best scorer name: {best_scorer_name}"
-    )
-
-    logger.debug(
-        f"trial best scorer scores:\n{cross_val_results[best_scorer_name]}"
-    )
 
     return np.mean(cross_val_results[best_scorer_name])
