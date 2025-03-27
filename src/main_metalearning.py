@@ -188,15 +188,15 @@ def main(
         "best_fit_scorer": best_fit_scorer,
         "tuning_num_samples": tuning_num_samples,
         # "search_space_sampler": search_space_sampler,
-        "job_id": job_id,
-        "array_job_id": array_job_id,
-        "array_task_id": array_task_id,
         "resume": resume,
         "track_best_f1": track_best_f1,
         "splitting_method": splitting_method,
         "early_stop_patience": early_stop_patience,
         "early_stop_metric": early_stop_metric,
         "positive_class_label": positive_class_label,
+        "job_id": job_id,
+        "array_job_id": array_job_id,
+        "array_task_id": array_task_id,
     }
 
     # Initialize wandb if enabled
@@ -328,6 +328,7 @@ def main(
                 eval_dataloader=test_loader,
                 val_or_test="test",
                 log_metrics=True,
+                log_gradients=True,
                 score_name_prefix=f"outer_fold_{i}_fit",
                 save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
                 track_best_f1=track_best_f1,

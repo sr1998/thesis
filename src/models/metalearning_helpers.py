@@ -267,7 +267,7 @@ def hyp_param_val_for_metalearning(
     mean_test_data = {
         k.replace("val/", f"mean_hyp_param_opt_vals/"): np.mean(v)
         for k, v in cross_val_results.items()
-        if "test" in k and "epoch" not in k
+        if "val" in k and "epoch" not in k
     }
     wandb_data.update(mean_test_data)
 
@@ -283,7 +283,7 @@ def hyp_param_val_for_metalearning(
     std_test_data = {
         k.replace("val/", f"std_hyp_param_opt_vals/"): np.std(v)
         for k, v in cross_val_results.items()
-        if "test" in k and "epoch" not in k
+        if "val" in k and "epoch" not in k
     }
     wandb_data.update(std_test_data)
     wandb_data["trial"] = trial.number
@@ -296,13 +296,14 @@ def hyp_param_val_for_metalearning(
     trial.set_user_attr(
         "actual_epochs", ceil(np.mean(cross_val_results["actual_epochs"]).item())
     )
-    logger.debug(
-        f"trial best scorer scores:\n{cross_val_results["val/" + extra_configs["best_fit_scorer"]]}"
-    )
-
     best_scorer_name = "val/best_" + extra_configs["best_fit_scorer"]
     best_scorer_name = best_scorer_name if best_scorer_name in cross_val_results else "val/" + extra_configs["best_fit_scorer"]
     logger.debug(
         f"trial best scorer name: {best_scorer_name}"
     )
-    return np.mean(cross_val_results["val/" + extra_configs["best_fit_scorer"]])
+
+    logger.debug(
+        f"trial best scorer scores:\n{cross_val_results[best_scorer_name]}"
+    )
+
+    return np.mean(cross_val_results[best_scorer_name])

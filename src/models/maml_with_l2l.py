@@ -95,7 +95,7 @@ class MAML:
             set_learning_rate(self.outer_optimizer, self.outer_lr)
         return self.outer_lr
 
-    def train_step(self, batch, n_parallel_tasks=1, score_name_prefix=None):
+    def train_step(self, batch, log_gradients, n_parallel_tasks, score_name_prefix=None):
         """Perform a single training step on a batch of tasks"""
         if self.outer_optimizer is None:
             self.initialize_optimizer()
@@ -141,7 +141,9 @@ class MAML:
             predictions = learner(X_query).squeeze()
             evaluation_error = self.loss_fn(predictions, y_query)
             evaluation_error.backward()
-            self._log_gradients(self.current_epoch, score_name_prefix or "")
+            
+            if log_gradients:
+                self._log_gradients(self.current_epoch, score_name_prefix or "")
             meta_train_error += evaluation_error.item()
 
             predictions_all.append(predictions.detach().cpu())
@@ -237,6 +239,7 @@ class MAML:
         early_stopping_patience: int = None,
         early_stopping_metric: str = "loss",
         log_metrics: bool = True,
+        log_gradients: bool = False,
         score_name_prefix: str = None,
         save_best_model_path: str = None,
         track_best_f1: bool = True,
@@ -331,7 +334,7 @@ class MAML:
                 train_dataloader, n_parallel_tasks
             )  # TODO batch size is wrong right?
             for i, batch in enumerate(batches):
-                result = self.train_step(batch, n_parallel_tasks, score_name_prefix)
+                result = self.train_step(batch, log_gradients, n_parallel_tasks, score_name_prefix)
                 # getting results like this, gets result of different model every iteration. So better to do after a whole epoch
                 # if result:
                 #     batch_count += 1

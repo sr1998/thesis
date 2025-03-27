@@ -76,6 +76,7 @@ srun apptainer exec \
     --n_gradient_steps 5 \
     --n_parallel_tasks 5 \
     --train_k_shot 10 \
+    --positive_class_label "Disease" \
     
     # --what "sun et al" \
     # --config_script "run_configs.rf_baseline_for_sun_et_al" \
