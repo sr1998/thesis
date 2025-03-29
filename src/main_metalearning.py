@@ -1,20 +1,26 @@
 import os
 import sys
+import time
+import traceback
+from functools import partial
 from importlib import import_module
 from pathlib import Path
-import traceback
 
+import filelock
+import numpy as np
 import optuna
+import optuna.storages
+import optuna.terminator
 from optuna.visualization import plot_param_importances
 
 from src.data.dataloader import (
     get_cross_validation_sun_et_al_data_splits,
 )
 from src.helper_function import (
+    checkpoint_updater_callback_optuna,
     get_resume_dir_for_experiment,
     get_run_dir_for_experiment,
     load_checkpoint,
-    optuna_wandb_callback,
     save_checkpoint,
 )
 from src.models.metalearning_helpers import (
@@ -31,7 +37,7 @@ from loguru import logger
 from torch import nn
 
 import wandb
-from src.global_vars import BASE_DATA_DIR
+from src.global_vars import BASE_DATA_DIR, RANDOM_SEED
 
 
 def main(
@@ -74,7 +80,10 @@ def main(
         tuning_mode,
         best_fit_scorer,
         tuning_num_samples,
+        tuning_num_samples_primary,
+        tuning_num_samples_helper,
         search_space_sampler,
+        initial_trial,
     ) = setup.values()
 
     if loss_fn == "BCELog":
@@ -132,7 +141,7 @@ def main(
     array_job_id = os.getenv("SLURM_ARRAY_JOB_ID")
     array_task_id = os.getenv("SLURM_ARRAY_TASK_ID")
     tax_level = abundance_file.split("_")[1]
-    
+
     wandb_base_tags = [
         str(test_study),
         algorithm,
@@ -145,17 +154,20 @@ def main(
 
     wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}"
     # Set up checkpoint path and load checkpoint if resuming
-    resume_dir = get_resume_dir_for_experiment("metalearning", algorithm, test_study, wandb_name)
-    checkpoint_path = resume_dir / "checkpoint.yaml"
-    checkpoint = load_checkpoint(checkpoint_path) if resume else {
+    resume_dir = get_resume_dir_for_experiment(
+        "metalearning", algorithm, test_study, wandb_name
+    )
+    checkpoint_path = str(resume_dir / "checkpoint.yaml")
+    checkpoint = load_checkpoint(checkpoint_path) or {
         "completed_folds": [],
-        "optuna_completed": False,
+        "trials_done_per_job": {},
         "wandb_run_id": None,
-        "fold_metrics": {}
+        "fold_metrics": {},
+        "warmup_completed": False,  # Flag for initial warmup phase
+        "optimization_done": False,  # Flag for optimization completion
+        "best_trial_params": None,
+        "primary_job_id": None,
     }
-
-    wandb_name += f"_{array_job_id or job_id}"
-    run_dir = get_run_dir_for_experiment("metalearning", algorithm, test_study, wandb_name)
 
     config = {
         # "model_name": model_name,
@@ -197,29 +209,25 @@ def main(
         "job_id": job_id,
         "array_job_id": array_job_id,
         "array_task_id": array_task_id,
+        "job_history": [f"{array_job_id or job_id}_{array_task_id or ''}"],
     }
 
-    # Initialize wandb if enabled
     # Initialize wandb if enabled
     if use_wandb:
         # Update config with previous job IDs if resuming
         if resume and checkpoint["wandb_run_id"]:
-            # Track job history in config
-            if "job_history" not in config:
-                config["job_history"] = []
-            
             if job_id or array_job_id:
                 current_job = f"{array_job_id or job_id}"
                 if array_task_id:
                     current_job += f"_{array_task_id}"
-                
+
                 # Add current job ID to history
                 config["job_history"].append(current_job)
-                
+
                 # Update run name to indicate multiple jobs
                 if len(config["job_history"]) > 1:
                     wandb_name += f"_multi{len(config['job_history'])}"
-        
+
         wandb.init(
             project="metalearning",
             name=wandb_name,
@@ -227,8 +235,8 @@ def main(
             notes=str(config),
             group=algorithm,
             tags=wandb_base_tags,
-            id=checkpoint["wandb_run_id"],
-            resume="allow" if resume and checkpoint["wandb_run_id"] else None
+            id=checkpoint["wandb_run_id"] if resume else None,
+            resume="allow" if resume and checkpoint["wandb_run_id"] else None,
         )
     else:
         wandb.init(
@@ -243,10 +251,24 @@ def main(
 
     logger.success("wandb init done")
 
+    run_dir = get_run_dir_for_experiment(
+        "metalearning", algorithm, test_study, wandb.run.id
+    )
+
     # Store wandb run ID in checkpoint
     if not checkpoint["wandb_run_id"]:
         checkpoint["wandb_run_id"] = wandb.run.id
-        save_checkpoint(checkpoint_path, checkpoint)
+
+    # Register this job
+    job_identifier = f"{array_job_id or job_id}"
+    if array_task_id:
+        job_identifier += f"_{array_task_id}"
+
+    # If first job, set as primary
+    if not checkpoint.get("primary_job_id"):
+        checkpoint["primary_job_id"] = job_identifier
+
+    save_checkpoint(checkpoint_path, checkpoint)
 
     train_scores = []
     test_scores = []
@@ -254,36 +276,144 @@ def main(
     best_trial = None
 
     if tuning_num_samples > 0:
-        # Create or load Optuna study with SQLite for persistence
+        # Create or load Optuna study with RDBStorage for parallel optimization
         storage_path = f"sqlite:///{resume_dir}/optuna_study.db"
+        storage = optuna.storages.RDBStorage(
+            url=storage_path,
+            heartbeat_interval=60,
+            grace_period=120,
+            failed_trial_callback=optuna.storages.RetryFailedTrialCallback(max_retry=1),
+        )
         optuna_study = optuna.create_study(
             direction=tuning_mode,
-            study_name=f"hyper-param_optimization_for_{wandb.run.name}",
-            storage=storage_path,
-            load_if_exists=True
+            study_name=f"hyper-param_optimization_for_{checkpoint['wandb_run_id']}",
+            storage=storage,
+            load_if_exists=True,
+            sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED),
         )
 
-        remaining_trials = tuning_num_samples - len(optuna_study.trials)
+        is_primary = job_identifier == checkpoint["primary_job_id"]
+        logger.info(f"This job is {'primary' if is_primary else 'helper'}")
 
-        if remaining_trials > 0 and not checkpoint["optuna_completed"]:
-            logger.info(f"Remaining trials: {remaining_trials}")
-            optuna_study.optimize(
-                lambda trial: hyp_param_val_for_metalearning(
-                    algorithm,
-                    val_loop_data_selection,
-                    train_data,
-                    train_metadata,
-                    train_k_shot,
-                    train_k_shot,
-                    search_space_sampler,
-                    trial,
-                    config,
-                    early_stop_pat=early_stop_patience,
-                    early_stop_metric=early_stop_metric,
-                ),
-                n_trials=remaining_trials,
-                callbacks=[optuna_wandb_callback],
-            )
+        # Calculate trials for this job
+        n_warmup_trials = 5
+        trials_to_do = (
+            tuning_num_samples_primary if is_primary else tuning_num_samples_helper
+        )
+        trials_to_do = trials_to_do - checkpoint["trials_done_per_job"].get(
+            job_identifier, 0
+        )
+
+        if trials_to_do > 0 and not checkpoint["optimization_done"]:
+            # Primary job handles warmup phase
+            if is_primary and not checkpoint.get("warmup_completed", False):
+                optuna_study.enqueue_trial(initial_trial)
+                logger.info(
+                    f"Primary job running warmup phase: {n_warmup_trials} trials"
+                )
+                optuna_study.optimize(
+                    lambda trial: hyp_param_val_for_metalearning(
+                        algorithm,
+                        val_loop_data_selection,
+                        train_data,
+                        train_metadata,
+                        train_k_shot,
+                        train_k_shot,
+                        search_space_sampler,
+                        trial,
+                        config,
+                        early_stop_pat=early_stop_patience,
+                        early_stop_metric=early_stop_metric,
+                    ),
+                    n_trials=n_warmup_trials,
+                    callbacks=[
+                        partial(
+                            checkpoint_updater_callback_optuna,
+                            checkpoint_path=checkpoint_path,
+                            job_id=job_identifier,
+                        )
+                    ],
+                )
+                with filelock.FileLock(checkpoint_path + ".lock", timeout=30):
+                    checkpoint = load_checkpoint(checkpoint_path)
+                    checkpoint["warmup_completed"] = True
+                    save_checkpoint(checkpoint_path, checkpoint)
+                logger.info("Warmup phase completed.")
+                trials_to_do -= n_warmup_trials
+
+            # Wait for warmup to complete if this is a helper job
+            if not is_primary:
+                max_wait = 60 * 30  # 30 minutes max wait
+                wait_interval = 60  # check every 60 seconds
+                waited = 0
+                with filelock.FileLock(checkpoint_path + ".lock", timeout=30):
+                    checkpoint = load_checkpoint(checkpoint_path)
+                while (
+                    not checkpoint.get("warmup_completed", False) and waited < max_wait
+                ):
+                    logger.info(
+                        f"Helper job waiting for warmup to complete... ({waited}s)"
+                    )
+                    time.sleep(wait_interval)
+                    waited += wait_interval
+                    # Reload checkpoint
+                    with filelock.FileLock(checkpoint_path + ".lock", timeout=30):
+                        checkpoint = load_checkpoint(checkpoint_path)
+
+                if not checkpoint.get("warmup_completed", False):
+                    raise TimeoutError("Warmup phase not completed in time.")
+
+            with filelock.FileLock(checkpoint_path + ".lock", timeout=30):
+                checkpoint = load_checkpoint(checkpoint_path)
+
+            # All jobs help with remaining trials
+            if trials_to_do > 0:
+                logger.info(f"Running {trials_to_do} trials for job {job_identifier}")
+                optuna_study.optimize(
+                    lambda trial: hyp_param_val_for_metalearning(
+                        algorithm,
+                        val_loop_data_selection,
+                        train_data,
+                        train_metadata,
+                        train_k_shot,
+                        train_k_shot,
+                        search_space_sampler,
+                        trial,
+                        config,
+                        early_stop_pat=early_stop_patience,
+                        early_stop_metric=early_stop_metric,
+                    ),
+                    n_trials=trials_to_do,
+                    callbacks=[
+                        partial(
+                            checkpoint_updater_callback_optuna,
+                            checkpoint_path=checkpoint_path,
+                            job_id=job_identifier,
+                        )
+                    ],
+                )
+
+            # if primary is finished, it should wait for helpers to finish
+            if is_primary:
+                logger.info(
+                    f"Primary job {job_identifier} completed {trials_to_do} trials"
+                )
+                # Wait for helper jobs to finish
+                while True:
+                    with filelock.FileLock(checkpoint_path + ".lock", timeout=30):
+                        checkpoint = load_checkpoint(checkpoint_path)
+                        if (
+                            sum([t for t in checkpoint["trials_done_per_job"].values()])
+                            >= tuning_num_samples
+                        ):
+                            break
+                    time.sleep(60)
+            else:
+                logger.info(
+                    f"Helper job {job_identifier} completed {trials_to_do} trials"
+                )
+                return
+
             try:
                 fig = plot_param_importances(optuna_study)
                 wandb.log({"param_imp_fig": wandb.Plotly(fig)})
@@ -302,9 +432,14 @@ def main(
                 traceback.print_exc()
                 logger.error(f"Error in plotting param importance: {e}")
 
+        checkpoint = load_checkpoint(checkpoint_path)
+        checkpoint["optimization_done"] = True
+
         best_trial = optuna_study.best_trial
         best_trial_params = best_trial.params
         best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+        checkpoint["best_trial_params"] = best_trial_params
+        save_checkpoint(checkpoint_path, checkpoint)
 
     best_trial_config = search_space_sampler(best_trial)
 
@@ -313,7 +448,7 @@ def main(
 
         if fold_id in checkpoint["completed_folds"]:
             logger.info(f"Skipping already completed fold {i}")
-            
+
             # Load saved metrics
             if fold_id in checkpoint["fold_metrics"]:
                 train_scores.append(checkpoint["fold_metrics"][fold_id]["train"])
@@ -338,7 +473,12 @@ def main(
                 config,
             )
 
-            n_epochs = int(best_trial.user_attrs["actual_epochs"]) if best_trial and "actual_epochs" in best_trial.user_attrs else 100
+            # n_epochs = (
+            #     int(best_trial.user_attrs["actual_epochs"])
+            #     if best_trial and "actual_epochs" in best_trial.user_attrs
+            #     else 100
+            # )
+            n_epochs = 1000
 
             train_res, test_res = best_model.fit(
                 train_dataloader=train_loader,
@@ -353,11 +493,19 @@ def main(
                 track_best_f1=track_best_f1,
             )
 
-            train_res = {
-                k: v for k, v in train_res.items() if k != "predictions" and k != "targets"
-            } if train_res else {}
+            train_res = (
+                {
+                    k: v.tolist() if hasattr(v, "tolist") else v
+                    for k, v in train_res.items()
+                    if k != "predictions" and k != "targets"
+                }
+                if train_res
+                else {}
+            )
             test_res = {
-                k: v for k, v in test_res.items() if k != "predictions" and k != "targets"
+                k: v.tolist() if hasattr(v, "tolist") else v
+                for k, v in test_res.items()
+                if k != "predictions" and k != "targets"
             }
 
             train_scores.append(train_res)
@@ -387,19 +535,29 @@ def main(
         test_std = test_scores.std()
 
         # Log bar plots for train and test metrics
-        train_summary_df = pd.DataFrame(
-            {"Metric": train_mean.index, "Mean": train_mean.values, "Std": train_std.values}
-        ) if not train_scores.empty else pd.DataFrame()
+        train_summary_df = (
+            pd.DataFrame(
+                {
+                    "Metric": train_mean.index,
+                    "Mean": train_mean.values,
+                    "Std": train_std.values,
+                }
+            )
+            if not train_scores.empty
+            else pd.DataFrame()
+        )
 
         test_summary_df = pd.DataFrame(
-            {"Metric": test_mean.index, "Mean": test_mean.values, "Std": test_std.values}
+            {
+                "Metric": test_mean.index,
+                "Mean": test_mean.values,
+                "Std": test_std.values,
+            }
         )
 
         if not train_summary_df.empty:
             # wandb.log({"Train Metrics Summary table": wandb.Table(dataframe=train_summary_df)})
-            train_summary_df.to_csv(
-                run_dir / "train_metrics_summary.csv", index=False
-            )
+            train_summary_df.to_csv(run_dir / "train_metrics_summary.csv", index=False)
         # wandb.log({"Test Metrics Summary table": wandb.Table(dataframe=test_summary_df)})
         test_summary_df.to_csv(run_dir / "test_metrics_summary.csv", index=False)
 
@@ -431,7 +589,7 @@ if __name__ == "__main__":
     #     n_gradient_steps=5,
     #     n_parallel_tasks=5,
     #     train_k_shot=10,
-    #     use_wandb=False,
+    #     use_wandb=True,
     #     resume=False,
     #     positive_class_label="Disease",
     # )

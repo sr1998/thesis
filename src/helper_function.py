@@ -1,8 +1,10 @@
 import hashlib
 import os
 from pathlib import Path
+import time
 from typing import Iterable
 
+import filelock
 import numpy as np
 import optuna
 import pandas as pd
@@ -599,15 +601,32 @@ def load_checkpoint(checkpoint_path):
     if os.path.exists(checkpoint_path):
         with open(checkpoint_path, "r") as f:
             return yaml.safe_load(f)
-    return {
-        "completed_folds": [],
-        "optuna_completed": False,
-        "wandb_run_id": None,
-        "fold_metrics": {},
-    }
+    return None
 
 
 def save_checkpoint(checkpoint_path, checkpoint_data):
     """Save checkpoint data to disk."""
     with open(checkpoint_path, "w") as f:
         yaml.safe_dump(checkpoint_data, f, default_flow_style=False)
+
+def checkpoint_updater_callback_optuna(
+    study: optuna.Study,
+    trial: optuna.Trial,
+    checkpoint_path: str,
+    job_id: str,
+):
+    """Callback function to update the checkpoint with the latest trial data."""
+    try:
+        with filelock.FileLock(checkpoint_path + ".lock", timeout=30):
+            # Load existing checkpoint data
+            checkpoint_data = load_checkpoint(checkpoint_path)
+
+            # Update checkpoint trials done for job
+            checkpoint_data["trials_done_per_job"][job_id] = checkpoint_data.get("trials_done_per_job", {}).get(job_id, 0) + 1
+
+            # Save updated checkpoint data
+            save_checkpoint(checkpoint_path, checkpoint_data)
+    except filelock.Timeout:
+        logger.error(f"Failed to acquire lock for checkpoint file: {checkpoint_path}")
+    except Exception as e:
+        logger.error(f"Error updating checkpoint: {e}")

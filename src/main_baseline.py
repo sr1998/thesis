@@ -115,7 +115,7 @@ def main(
     tax_level = abundance_file.split("_")[1]
     setup["tax_level"] = tax_level
     setup["model"] = standard_pipeline.named_steps["model"].__class__.__name__
-    setup["device"] = standard_pipeline.named_steps["model"].device
+    setup["device"] = standard_pipeline.named_steps["model"].device if algorithm == "NeuralNet" else "cpu"
     if datasource == "mgnify":
         setup["summary_type"] = summary_type
         setup["pipeline_version"] = pipeline_version
@@ -127,7 +127,7 @@ def main(
     setup["array_task_id"] = array_task_id
 
     job_id = os.getenv("SLURM_JOB_ID")
-    wandb_name = f"{datasource}__d_{study}__t_{tax_level}__{balanced_or_unbalanced}__{array_job_id or job_id}"
+    wandb_name = f"{algorithm}__{datasource}__d_{study}__t_{tax_level}__{balanced_or_unbalanced}__{array_job_id or job_id}"
     wandb_name += f"s_{summary_type.split("_")[0]}" if summary_type else ""
 
     # get misc config parameters
@@ -221,8 +221,6 @@ def main(
 
     train_scores = []
     test_scores = []
-    train_scores2 = []
-    test_scores2 = []
     split_config = []
 
     outer_cv = outer_cv_config["type"](**outer_cv_config["params"])
@@ -455,9 +453,10 @@ if __name__ == "__main__":
 
     # main(
     #     datasource="sun et al",
-    #     config_script="run_configs.overfitting",
-    #     algorithm="NeuralNet",
-    #     abundance_file="mpa4_species_profile_after_abundance_prevalence_filtering.csv",
+    #     config_script="run_configs.baseline",
+    #     algorithm="RandomForestClassifier",
+    #     balanced_or_unbalanced="unbalanced",
+    #     abundance_file="mpa4_species_profile_preprocessed.csv",
     #     metadata_file="sample_group_species_preprocessed.csv",
     #     positive_class_label="Disease",
     # )

@@ -15,7 +15,9 @@ def xgboost_search_space_sampler(optuna_trial):
 
 
 def rf_search_space_sampler(optuna_trial, best_fit_scorer):
-    model__n_estimators = optuna_trial.suggest_int("model__n_estimators", 10, 500, step=10)
+    model__n_estimators = optuna_trial.suggest_int(
+        "model__n_estimators", 10, 500, step=10
+    )
     model__max_depth = optuna_trial.suggest_int("model__max_depth", 10, 200, step=10)
     model__criterion = optuna_trial.suggest_categorical(
         "model__criterion", ["gini", "entropy"]
@@ -59,24 +61,32 @@ def nn_search_space_sampler(optuna_trial):
             "model__log_metrics_every_n_epoch": 10,
             "model__log_gradients_every_n_epoch": 10,
         }
-    scale_factor_before_training = optuna_trial.suggest_int("scale_factor_before_training", 1, 1001, step=100)
+    scale_factor_before_training = optuna_trial.suggest_int(
+        "scale_factor_before_training", 1, 1001, step=100
+    )
 
     # model__n_epochs = optuna_trial.suggest_int("model__n_epochs", 1, 200)
     model__batch_size = optuna_trial.suggest_int("model__batch_size", 8, 64, step=8)
     model__lr = optuna_trial.suggest_float("model__lr", 1e-5, 1e-2)
     model__num_layers = optuna_trial.suggest_int("model__num_layers", 1, 4)
-    model__dropout_rate = optuna_trial.suggest_float("model__dropout_rate", 0.0, 0.7, step=0.1)
+    model__dropout_rate = optuna_trial.suggest_float(
+        "model__dropout_rate", 0.0, 0.7, step=0.1
+    )
     model__layer_norm = optuna_trial.suggest_categorical(
         "model__layer_norm", [True, False]
     )
-    model__batch_norm = optuna_trial.suggest_categorical("model__batch_norm", [True, False])
+    model__batch_norm = optuna_trial.suggest_categorical(
+        "model__batch_norm", [True, False]
+    )
     if model__layer_norm and model__batch_norm:
         model__batch_norm = False
     # model__activation = optuna_trial.suggest_categorical("model__activation", ["relu", "leaky_relu", "elu", "gelu", "selu"])
     base_size = optuna_trial.suggest_int(
         "model__base_size", 16, 1008, step=32
     )  # Much smaller maximum
-    reduction_factor = optuna_trial.suggest_float("model__reduction_factor", 1.0, 3.0, step=0.5)
+    reduction_factor = optuna_trial.suggest_float(
+        "model__reduction_factor", 1.0, 3.0, step=0.5
+    )
 
     # Dynamically generate layer sizes
     model__layer_sizes = []
@@ -112,27 +122,30 @@ def nn_search_space_sampler(optuna_trial):
     }
 
 
+MAML_INTITIAL_TRIAL = {
+    # Learning rates
+    "outer_lr_range": (1, 1),
+    "inner_lr_range": (0.5, 0.5),  # Same value for now as specified
+    "inner_lr_reduction_factor": 2,
+    # Training configuration
+    "max_epochs": 300,
+    "do_normalization_before_scaling": True,
+    "scale_factor_before_training": 100,
+    "batch_size": 16,
+    # Model architecture
+    "model__num_layers": 2,
+    "model__layer_sizes": None,
+    "model__dropout_rate": 0.5,
+    "model__layer_norm": False,
+    "model__batch_norm": True,
+    "model__activation": "relu",
+    "model__weight_decay": 0.0,
+}
+
+
 def maml_search_space_sampler(optuna_trial):
     if optuna_trial is None:
-        return {
-            # Learning rates
-            "outer_lr_range": (1, 1),
-            "inner_lr_range": (0.5, 0.5),  # Same value for now as specified
-            "inner_lr_reduction_factor": 2,
-            # Training configuration
-            "max_epochs": 100,
-            "do_normalization_before_scaling": True,
-            "scale_factor_before_training": 100,
-            "batch_size": 16,
-            # Model architecture
-            "model__num_layers": 2,
-            "model__layer_sizes": None,
-            "model__dropout_rate": 0.5,
-            "model__layer_norm": False,
-            "model__batch_norm": True,
-            "model__activation": "relu",
-            "model__weight_decay": 0.0,
-        } 
+        return MAML_INTITIAL_TRIAL
     # Meta-learning specific hyperparameters
     # outer_lr_min = optuna_trial.suggest_float("outer_lr_min", 1e-3, 2)
     # outer_lr_max = optuna_trial.suggest_float("outer_lr_max", outer_lr_min, 2)
@@ -142,18 +155,20 @@ def maml_search_space_sampler(optuna_trial):
     # inner_lr = optuna_trial.suggest_float("inner_lr", 1e-6, 1e-4)
     inner_lr_reduction_factor = optuna_trial.suggest_int(
         "inner_lr_reduction_factor", 1, 10
-    )   # Division used with reduction factor
+    )  # Division used with reduction factor
 
     # Training parameters
     # max_epochs = optuna_trial.suggest_int("max_epochs", 10, 300)   # Fixed for now as we use early stopping
     # do_normalization_before_scaling = optuna_trial.suggest_categorical(
     #     "do_normalization_before_scaling", [True, False]
     # )
-    scale_factor_before_training = optuna_trial.suggest_int("scale_factor_before_training", 1, 1000, step=100)
+    scale_factor_before_training = optuna_trial.suggest_int(
+        "scale_factor_before_training", 1, 1000, step=100
+    )
 
     # Model architecture hyperparameters
     model__num_layers = optuna_trial.suggest_int(
-        "model__num_layers", 1, 5
+        "model__num_layers", 2, 7
     )  # Number of hidden layers
 
     # Option 2: Use a base size parameter for more control
@@ -187,7 +202,9 @@ def maml_search_space_sampler(optuna_trial):
         "model__layer_norm", [True, False]
     )
     model__weight_decay = optuna_trial.suggest_float("model__weight_decay", 0.0, 1.0)
-    model__batch_norm = optuna_trial.suggest_categorical("model__batch_norm", [True, False])
+    model__batch_norm = optuna_trial.suggest_categorical(
+        "model__batch_norm", [True, False]
+    )
     # # Don't use both layer norm and batch norm together
     if model__layer_norm and model__batch_norm:
         model__batch_norm = False
@@ -217,9 +234,9 @@ def maml_search_space_sampler(optuna_trial):
 
 
 def reptile_search_space_sampler(optuna_trial):
-    maml_configs = maml_search_space_sampler(optuna_trial)
+    maml_configs, initial_trial = maml_search_space_sampler(optuna_trial)
     maml_configs["betas"] = (
         optuna_trial.suggest_float("betas_0", 0.0, 1),
         optuna_trial.suggest_float("betas_1", 0.0, 1),
     )
-    return maml_configs
+    return maml_configs, initial_trial

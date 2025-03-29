@@ -10,7 +10,11 @@ def get_setup(algorithm: str):
     n_inner_splits = 3
     tuning_mode = "maximize"
     best_fit_scorer = "f1"
-    tuning_num_samples = 50
+    n_parallel_jobs = 5
+    tuning_num_samples_helper = 20
+    tuning_num_samples_primary = tuning_num_samples_helper + 5 # 5 is needed for warmp-up
+    tuning_num_samples = tuning_num_samples_helper * n_parallel_jobs + 5
+
 
     return {
         "n_outer_splits": n_outer_splits,
@@ -18,5 +22,8 @@ def get_setup(algorithm: str):
         "tuning_mode": tuning_mode,
         "best_fit_scorer": best_fit_scorer,
         "tuning_num_samples": tuning_num_samples,
+        "tuning_num_samples_primary": tuning_num_samples_primary,
+        "tuning_num_samples_helper": tuning_num_samples_helper,
         "search_space_sampler": search_space_sampler,
+        "initial_trial": sss.MAML_INTITIAL_TRIAL,
     }
