@@ -179,8 +179,6 @@ class MAML:
         predictions_all = []
         targets_all = []
 
-        self.maml.train()
-
         # Process each task in the batch
         for X, y in batch:
             # Prep data
@@ -192,6 +190,7 @@ class MAML:
 
             # Clone and adapt model
             learner = self.maml.clone()
+            learner.train()
             learner = maml_helpers_l2l.fast_adapt(
                 X_support,
                 y_support,
@@ -396,7 +395,7 @@ class MAML:
         log_step: int = None,
     ):
         """Evaluate the model on the entire validation dataset"""
-
+        self.maml.eval()
         all_batches = list(dataloader)
         results = self.evaluate_step(all_batches)
 
