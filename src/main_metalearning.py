@@ -267,6 +267,9 @@ def main(
     # If first job, set as primary
     if not checkpoint.get("primary_job_id"):
         checkpoint["primary_job_id"] = job_identifier
+    else:
+        if tuning_num_samples > 0 and sum([t for t in checkpoint["trials_done_per_job"].values()]) >= tuning_num_samples:
+            checkpoint["primary_job_id"] = job_identifier
 
     save_checkpoint(checkpoint_path, checkpoint)
 
@@ -414,23 +417,23 @@ def main(
                 )
                 return
 
-            try:
-                fig = plot_param_importances(optuna_study)
-                wandb.log({"param_imp_fig": wandb.Plotly(fig)})
-                param_importance = optuna.importance.get_param_importances(optuna_study)
-                param_importance_df = pd.DataFrame(
-                    {
-                        "Parameter": list(param_importance.keys()),
-                        "Importance": list(param_importance.values()),
-                    }
-                )
-                # wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
-                param_importance_df.to_csv(
-                    run_dir / "param_importance.csv", index=False
-                )
-            except Exception as e:
-                traceback.print_exc()
-                logger.error(f"Error in plotting param importance: {e}")
+            # try:
+            #     fig = plot_param_importances(optuna_study)
+            #     wandb.log({"param_imp_fig": wandb.Plotly(fig)})
+            #     param_importance = optuna.importance.get_param_importances(optuna_study)
+            #     param_importance_df = pd.DataFrame(
+            #         {
+            #             "Parameter": list(param_importance.keys()),
+            #             "Importance": list(param_importance.values()),
+            #         }
+            #     )
+            #     # wandb.log({"param_imp": wandb.Table(dataframe=param_importance_df)})
+            #     param_importance_df.to_csv(
+            #         run_dir / "param_importance.csv", index=False
+            #     )
+            # except Exception as e:
+            #     traceback.print_exc()
+            #     logger.error(f"Error in plotting param importance: {e}")
 
         checkpoint = load_checkpoint(checkpoint_path)
         checkpoint["optimization_done"] = True
@@ -517,6 +520,12 @@ def main(
                 checkpoint["fold_metrics"] = {}
             checkpoint["fold_metrics"][fold_id] = {"train": train_res, "test": test_res}
             save_checkpoint(checkpoint_path, checkpoint)
+
+            train_res = {"train/" + k: v for k, v in train_res.items()}
+            test_res = {"test/" + k: v for k, v in test_res.items()}
+            wandb.log(
+                {"Outer fold": dict(train_res, **test_res)},
+            )
 
         except Exception as e:
             logger.error(f"Error in outer CV fold {i}: {e}")
