@@ -257,6 +257,7 @@ def protonet_search_space_sampler(optuna_trial):
             "model__layer_norm": False,
             "model__batch_norm": True,
             "max_epochs": 500,
+            "model__activation": "relu",
         }
 
     model__starting_lr = optuna_trial.suggest_float(
@@ -332,5 +333,6 @@ def protonet_search_space_sampler(optuna_trial):
         "model__batch_norm": model__batch_norm,
         "max_epochs": 500,
         "model__activation": "relu",
+        "model__base_size": base_size,
     }
 
