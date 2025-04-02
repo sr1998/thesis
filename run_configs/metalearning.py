@@ -4,6 +4,7 @@ def get_setup(algorithm: str):
     search_space_sampler = {
         "MAML": sss.maml_search_space_sampler,
         "Reptile": sss.reptile_search_space_sampler,
+        "ProtoNet": sss.protonet_search_space_sampler,
     }[algorithm]
     
     n_outer_splits = 10
@@ -25,5 +26,5 @@ def get_setup(algorithm: str):
         "tuning_num_samples_primary": tuning_num_samples_primary,
         "tuning_num_samples_helper": tuning_num_samples_helper,
         "search_space_sampler": search_space_sampler,
-        "initial_trial": sss.MAML_INTITIAL_TRIAL,
+        "initial_trial": None #sss.MAML_INTITIAL_TRIAL,
     }

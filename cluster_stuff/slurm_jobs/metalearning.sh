@@ -14,6 +14,7 @@
 # export DATASETS_ROOT="/scratch/$USER/datasets"
 BALANCED_OR_UNBALANCED="balanced" # or "unbalanced"
 ALGORITHM="Reptile"
+SPLITTING_METHOD="normal" # normal or study_wise
 STUDIES=(
     'ChenB_2020' 'YeZ_2018' 'ChuY_2021' 'ZhouC_2020' 'YeohYK_2021'
     'HeQ_2017' 'HuY_2019' 'HuangR_2020' 'LiJ_2017' 'LiR_2021'
@@ -60,6 +61,7 @@ nvidia-smi
 # Run script
 # Note: There cannot be any characters incuding space behind the `\` symbol.
 
+# MAML
 srun apptainer exec \
     -B $HOME:$HOME \
     -B /tudelft.net/staff-umbrella/abeellabstudents/sramezani:/tudelft.net/staff-umbrella/abeellabstudents/sramezani \
@@ -77,6 +79,8 @@ srun apptainer exec \
     --n_parallel_tasks 5 \
     --train_k_shot 10 \
     --positive_class_label "Disease" \
+    --splitting_method="normal" \
+
     
     # --what "sun et al" \
     # --config_script "run_configs.rf_baseline_for_sun_et_al" \

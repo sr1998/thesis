@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 import wandb
 from src.data.sun_et_al import BinaryFewShotBatchSampler, KShotBatchSampler, LabelOnlyDataset, MicrobiomeDataset
 from src.helper_function import column_rename_for_sun_et_al_metadata, df_str_for_loguru, encode_labels
-from src.models import maml_with_l2l, reptile_with_l2l
+from src.models import maml_with_l2l, protonet, reptile_with_l2l
 from src.models.models import HighlyFlexibleModel
 
 
@@ -176,6 +176,17 @@ def get_metalearning_model_from_trial(
             loss_fn=extra_configs["loss_fn"],
             weight_decay=trial_config["model__weight_decay"],
         )
+    elif algorithm == "ProtoNet":
+        model = protonet.ProtonetTrainer(
+            model=model,
+            device=extra_configs["device"],
+            train_k_shot=train_k_shot,
+            eval_k_shot=eval_k_shot,
+            starting_lr=trial_config["model__starting_lr"],
+            scheduler_step=trial_config["model__scheduler_step"],
+            scheduler_gamma=trial_config["model__scheduler_gamma"],
+            weight_decay=trial_config["model__weight_decay"],
+        )
     else:
         raise ValueError(f"Unknown algorithm: {algorithm}")
 
@@ -252,7 +263,7 @@ def hyp_param_val_for_metalearning(
             cross_val_results["actual_epochs"] = []
         cross_val_results["actual_epochs"].append(model.current_epoch)
 
-    # Get mean and std for all metrics
+    # Get mean ansu std for all metrics
     wandb_data = {}
 
     # Add mean train metrics

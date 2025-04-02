@@ -163,7 +163,7 @@ def maml_search_space_sampler(optuna_trial):
     #     "do_normalization_before_scaling", [True, False]
     # )
     scale_factor_before_training = optuna_trial.suggest_int(
-        "scale_factor_before_training", 1, 1000, step=100
+        "scale_factor_before_training", 1, 1001, step=100
     )
 
     # Model architecture hyperparameters
@@ -240,3 +240,95 @@ def reptile_search_space_sampler(optuna_trial):
         optuna_trial.suggest_float("betas_1", 0.0, 1),
     )
     return maml_configs, initial_trial
+
+
+def protonet_search_space_sampler(optuna_trial):
+    if optuna_trial is None:
+        return {
+            "model__starting_lr": 0.01,
+            "model__scheduler_step": 50,
+            "model__scheduler_gamma": 0.5,
+            "model__weight_decay": 0.0,
+            "scale_factor_before_training": 100,
+            "model__num_layers": 3,
+            "model__layer_sizes": [2000, 1000, 500],
+            "model__dropout_rate": 0,
+            "model__layer_norm": False,
+            "model__batch_norm": True,
+            "max_epochs": 500,
+        }
+
+    model__starting_lr = optuna_trial.suggest_float(
+        "model__starting_lr", 1e-4, 1e-1, log=True
+    )
+    model__scheduler_gamma = optuna_trial.suggest_float(
+        "model__scheduler_gamma", 0.1, 1.0, step=0.1
+    )
+    model__scheduler_step = optuna_trial.suggest_int(
+        "model__scheduler_step", 0, 100, step=10
+    ) if model__scheduler_gamma > 0 else 0
+    model__weight_decay = optuna_trial.suggest_float(
+        "model__weight_decay", 0.0, 1.0, step=0.1
+    )
+    scale_factor_before_training = optuna_trial.suggest_int(
+        "scale_factor_before_training", 1, 1001, step=100
+    )
+
+    # Model architecture hyperparameters
+    model__num_layers = optuna_trial.suggest_int(
+        "model__num_layers", 2, 7
+    )  # Number of hidden layers
+
+    # Option 2: Use a base size parameter for more control
+    base_size = optuna_trial.suggest_int(
+        "model__base_size", 16, 1024, step=16
+    )  # Much smaller maximum
+    reduction_factor = optuna_trial.suggest_float("model__reduction_factor", 1.0, 3.0)
+
+    # Dynamic creation of layer sizes based on num_layers
+    model__layer_sizes = []
+    for i in range(model__num_layers):
+        # Calculate size based on layer position
+        if i == 0:
+            # First layer size based on base_size
+            max_size = base_size
+        else:
+            # Subsequent layers get progressively smaller
+            max_size = max(8, int(model__layer_sizes[i - 1] / reduction_factor))
+
+        min_size = max(8, max_size // 4)  # Allow much smaller minimum sizes
+
+        # Suggest layer size
+        layer_size = optuna_trial.suggest_int(
+            f"model__layer_{i}_size", min_size, max_size, step=8
+        )
+        model__layer_sizes.append(layer_size)
+
+    # Model configuration parameters
+    model__dropout_rate = optuna_trial.suggest_float("model__dropout_rate", 0.0, 0.7)
+    model__layer_norm = optuna_trial.suggest_categorical(
+        "model__layer_norm", [True, False]
+    )
+    model__weight_decay = optuna_trial.suggest_float("model__weight_decay", 0.0, 1.0)
+    model__batch_norm = optuna_trial.suggest_categorical(
+        "model__batch_norm", [True, False]
+    )
+    # # Don't use both layer norm and batch norm together
+    if model__layer_norm and model__batch_norm:
+        model__batch_norm = False
+
+    return {
+        "model__starting_lr": model__starting_lr,
+        "model__scheduler_step": model__scheduler_step,
+        "model__scheduler_gamma": model__scheduler_gamma,
+        "model__weight_decay": model__weight_decay,
+        "scale_factor_before_training": scale_factor_before_training,
+        "model__num_layers": model__num_layers,
+        "model__layer_sizes": model__layer_sizes,
+        "model__dropout_rate": model__dropout_rate,
+        "model__layer_norm": model__layer_norm,
+        "model__batch_norm": model__batch_norm,
+        "max_epochs": 500,
+        "model__activation": "relu",
+    }
+
