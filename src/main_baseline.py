@@ -149,6 +149,7 @@ def main(
         balanced_or_unbalanced,
         tax_level,
         algorithm,
+        "outer_" + str(outer_cv_config["type"].__name__),
     ]
 
     if datasource == "mgnify":

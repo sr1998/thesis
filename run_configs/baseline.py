@@ -10,7 +10,7 @@ from sklearn.metrics import (
     average_precision_score,
     make_scorer,
 )
-from sklearn.model_selection import ShuffleSplit
+from sklearn.model_selection import ShuffleSplit, StratifiedShuffleSplit
 from sklearn.preprocessing import Normalizer
 from tabpfn import TabPFNClassifier
 from xgboost import XGBClassifier
@@ -38,12 +38,12 @@ def get_setup(model_name, with_oversampling=True):
     tuning_num_samples = 50
 
     outer_cv_config = {
-        "type": ShuffleSplit,
+        "type": StratifiedShuffleSplit,
         "params": {"n_splits": n_outer_splits, "test_size": 0.2, "random_state": 42},
     }
 
     inner_cv_config = {
-        "type": ShuffleSplit,
+        "type": StratifiedShuffleSplit,
         "params": {
             "n_splits": n_inner_splits,
             "test_size": 0.2,
