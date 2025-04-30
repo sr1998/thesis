@@ -4,11 +4,12 @@ from time import sleep
 from loguru import logger
 import numpy as np
 import pandas as pd
-from torch import float32, tensor
+from torch import float32, tensor, randn_like
 from torch.utils.data import Dataset, Sampler
 
 from src.helper_function import circular_slice, df_str_for_loguru
 from src.preprocessing.functions import pandas_label_encoder
+from src.global_vars import RANDOM_SEED
 
 
 class MicrobiomeDataset(Dataset):
@@ -23,6 +24,7 @@ class MicrobiomeDataset(Dataset):
         transform=None,
         target_transform=None,
         preselected_support_set: list[str] = None,  # only for val and test#TODO test thoroughly
+        jitter_fraction: float = 0.2,       # 10 % of within‑study σ  (tune as you like)
     ):
         """Constructor for the MicrobiomeDataset class.
 
@@ -60,6 +62,7 @@ class MicrobiomeDataset(Dataset):
 
         # Reset the index
         self.samples = self.samples.reset_index(drop=True)
+        raw_samples_df = self.samples.copy()
 
         if preprocessor is not None:
             self.samples = preprocessor(self.samples)
@@ -80,7 +83,18 @@ class MicrobiomeDataset(Dataset):
             for group, group_df in by_project_grouped_labels
         }
         # labels, sorted as samples
+        self.projects = label_and_project["project"].tolist()
         self.labels = tensor(label_and_project["label"].to_numpy(), dtype=float32)
+
+        self.jitter_fraction = jitter_fraction
+        if self.jitter_fraction:
+            self.project_sigma = {}
+            grouped = raw_samples_df.groupby(label_and_project["project"])
+            for proj, df in grouped:
+                sd = df.std(axis=0)                                 # pandas per‑feature s.d.
+                # fall back to tiny ε so we never divide by zero
+                sd_tensor = tensor(sd.fillna(0.0).to_numpy(), dtype=float32)
+                self.project_sigma[proj] = sd_tensor * jitter_fraction
 
         self.transform = transform
         self.target_transform = target_transform
@@ -100,15 +114,22 @@ class MicrobiomeDataset(Dataset):
             idx (int): The index of the sample and label to return.
 
         """
-        samples = self.samples[idx]
-        labels = self.labels[idx]
+        sample = self.samples[idx]
+        label = self.labels[idx]
+        proj = self.projects[idx]
+
+        if self.jitter_fraction:
+            sigma_vec = self.project_sigma[proj].to(sample.device)
+            noise = randn_like(sample) * sigma_vec
+            sample = sample + noise
+
         if self.transform:
-            samples = self.transform(samples)
+            sample = self.transform(sample)
 
         if self.target_transform:
-            labels = self.target_transform(labels)
+            label = self.target_transform(label)
 
-        return samples, 
+        return sample, label
 
     # def __getitems__(self, indices: list[int]) -> list[tensor, tensor]:
     #     """Returns the samples and labels at the given indices with the transformations applied.
@@ -155,70 +176,98 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
         if self.training:
             # number of batches each group can give is given by its largest class (so we oversample the smaller class)
             # +1 for each group to make sure all data is sampled in each epoch (mainly to prevent issues with large K_shot and small classes)
-            self.n_batches_per_group = {
+            n_batches_per_group_training = {
                 group: max(len(ids) for ids in label_dict.values()) // self.k_shot + 1
                 for group, label_dict in dataset.group_to_label_idx_per_class.items()
             }
 
-            self.groups_to_sample = [
+            self.groups_to_sample_training = [
                 group
-                for group, n_batches in self.n_batches_per_group.items()
+                for group, n_batches in n_batches_per_group_training.items()
                 for _ in range(n_batches)
             ]
 
             if self.shuffle_once or self.shuffle:
-                self.shuffle_data()
-        else:
-            # validation/testing:
-            # Each group is sampled once and the query set is all the data except the support set.
-            self.n_batches_per_group = {group: 1 for group in self.groups}
-            self.groups_to_sample = self.groups.copy()  # compatibility with training, but no effect
+                random.shuffle(self.groups_to_sample_training)
+                # for group in self.groups:
+                #     for label, label_ids in self.dataset.group_to_label_idx_per_class[
+                #         group
+                #     ].items():
+                #         np.random.shuffle(label_ids)
 
-            if (self.shuffle_once or self.shuffle_once) and not self.dataset.preselected_support_set_used:
-                self.shuffle_data()
+        # validation/testing:
+        # Each group is sampled once and the query set is all the data except the support set.
+        # n_batches_per_group_eval = {group: 1 for group in self.groups}
+        self.groups_to_sample_eval = self.groups.copy()
 
-    def shuffle_data(self):
-        random.shuffle(self.groups_to_sample)
-        for group in self.groups:
-            for label, label_ids in self.dataset.group_to_label_idx_per_class[
-                group
-            ].items():
-                np.random.shuffle(label_ids)
+
+        if (self.shuffle_once or self.shuffle_once):
+            for group in self.groups:
+                    for label, label_ids in self.dataset.group_to_label_idx_per_class[
+                        group
+                    ].items():
+                        np.random.shuffle(label_ids)
+            if not self.dataset.preselected_support_set_used:
+                random.shuffle(self.groups_to_sample_eval) 
 
     def __iter__(self):
-        if self.shuffle and not self.dataset.preselected_support_set_used:    # No shuffle if preselected support set is used
-            self.shuffle_data()
+        if self.training:    # No shuffle if preselected support set is used
+            random.shuffle(self.groups_to_sample_training)
+            for group in self.groups:
+                    for label, label_ids in self.dataset.group_to_label_idx_per_class[
+                        group
+                    ].items():
+                        np.random.shuffle(label_ids)
 
         start_indices_per_group = {group: 0 for group in self.groups}
-        for group in self.groups_to_sample: # group gives a task
-            batch = []
-            label_ids_per_class = self.dataset.group_to_label_idx_per_class[group]
-            start_idx = start_indices_per_group[group]
-            for label_ids in label_ids_per_class.values():
-                # We sample the label_ids of the class circularly as we have number of batches based on the
-                # largest class for each group (so the smaller class is oversampled)
-                # Circular slicing like this can be a problem if the number of samples is less than 2*k_shot,
-                # as query and support set will overlap. So, be mindful in case you need both.
-                batch.extend(circular_slice(label_ids, start_idx, start_idx + self.k_shot))
-            start_indices_per_group[group] += self.k_shot
-            start_idx = start_indices_per_group[group]
-            if self.include_query:
+        if self.training:
+            for group in self.groups_to_sample_training: # group gives a task
+                batch = []
+                label_ids_per_class = self.dataset.group_to_label_idx_per_class[group]
+                start_idx = start_indices_per_group[group]
                 for label_ids in label_ids_per_class.values():
-                    if self.training:
+                    # We sample the label_ids of the class circularly as we have number of batches based on the
+                    # largest class for each group (so the smaller class is oversampled)
+                    # Circular slicing like this can be a problem if the number of samples is less than 2*k_shot,
+                    # as query and support set will overlap. So, be mindful in case you need both.
+                    batch.extend(circular_slice(label_ids, start_idx, start_idx + self.k_shot))
+                start_indices_per_group[group] += self.k_shot
+                start_idx = start_indices_per_group[group]
+                if self.include_query:
+                    for label_ids in label_ids_per_class.values():
                         # We sample the label_ids of the class circularly as we have number of batches based on the
                         # largest class for each group (so the smaller class is oversampled)
                         # Circular slicing like this can be a problem if the number of samples is less than 2*k_shot,
                         # as query and support set will overlap. So, be mindful in case you need both.
                         batch.extend(circular_slice(label_ids, start_idx, start_idx + self.k_shot))
                         start_indices_per_group[group] += self.k_shot
-                    else:
+
+                yield batch
+        else:
+            for group in self.groups_to_sample_eval: # group gives a task
+                batch = []
+                label_ids_per_class = self.dataset.group_to_label_idx_per_class[group]
+                start_idx = start_indices_per_group[group]
+                for label_ids in label_ids_per_class.values():
+                    # We sample the label_ids of the class circularly as we have number of batches based on the
+                    # largest class for each group (so the smaller class is oversampled)
+                    # Circular slicing like this can be a problem if the number of samples is less than 2*k_shot,
+                    # as query and support set will overlap. So, be mindful in case you need both.
+                    batch.extend(circular_slice(label_ids, start_idx, start_idx + self.k_shot))
+                start_indices_per_group[group] += self.k_shot
+                start_idx = start_indices_per_group[group]
+                if self.include_query:
+                    for label_ids in label_ids_per_class.values():
                         batch.extend(label_ids[start_idx:])
                         # start_indices_per_group[group] += len(label_ids[start_idx:])    # not necessary as each group is sampled once
-                
-            yield batch
+                    
+                yield batch
 
     def __len__(self):
-        return len(self.groups_to_sample)
+        if self.training:
+            return len(self.groups_to_sample_training)
+        else:
+            return len(self.groups_to_sample_eval)
     
 
 class LabelOnlyDataset(Dataset):

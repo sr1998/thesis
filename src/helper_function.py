@@ -1,9 +1,11 @@
 import hashlib
 import os
 from pathlib import Path
+import random
 import time
 from typing import Iterable
 
+import torch
 import filelock
 import numpy as np
 import optuna
@@ -26,6 +28,7 @@ from src.global_vars import (
     BASE_RESUME_DIR,
     BASE_RUN_DIR,
     HTTP_ADAPTER_FOR_REQUESTS,
+    RANDOM_SEED,
 )
 
 
@@ -224,7 +227,10 @@ def circular_slice(arr: Iterable, start: int, end: int) -> Iterable:
 
 def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
     """Get the pipeline with the hyperparameters sampled from the search space."""
-    trial_config = search_space_sampler(optuna_trial)
+    if search_space_sampler is not None:
+        trial_config = search_space_sampler(optuna_trial)
+    else:
+        trial_config = {}
 
     if what == "mgnify":
         n_neighbors = trial_config["preprocessor__feature_space_change__n_neighbors"]
@@ -596,12 +602,21 @@ def check_run_finished(project_name, run_name, entity_name="shayan000"):
     print(f"No finished run named '{run_name}' found. Continuing...")
 
 
-def load_checkpoint(checkpoint_path):
+def load_checkpoint(checkpoint_path, resume=True):
     """Load checkpoint data or create empty checkpoint if none exists."""
-    if os.path.exists(checkpoint_path):
+    if os.path.exists(checkpoint_path) and resume:
         with open(checkpoint_path, "r") as f:
             return yaml.safe_load(f)
-    return None
+    return {
+            "completed_folds": [],
+            "trials_done_per_job": {},
+            "wandb_run_id": None,
+            "fold_metrics": {},
+            "warmup_completed": False,  # Flag for initial warmup phase
+            "optimization_done": False,  # Flag for optimization completion
+            "best_trial_params": None,
+            "primary_job_id": None,
+        }
 
 
 def save_checkpoint(checkpoint_path, checkpoint_data):
@@ -630,3 +645,20 @@ def checkpoint_updater_callback_optuna(
         logger.error(f"Failed to acquire lock for checkpoint file: {checkpoint_path}")
     except Exception as e:
         logger.error(f"Error updating checkpoint: {e}")
+
+def set_seed(seed=RANDOM_SEED):
+    # Python's built-in random module
+    random.seed(seed)
+    
+    # Numpy's random module
+    np.random.seed(seed)
+    
+    # PyTorch seed for CPU
+    torch.manual_seed(seed)
+    
+    # PyTorch seed for all GPU devices (if using CUDA)
+    torch.cuda.manual_seed_all(seed)
+    
+    # Make sure to disable CuDNN's non-deterministic optimizations
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False

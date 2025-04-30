@@ -26,5 +26,5 @@ def get_setup(algorithm: str):
         "tuning_num_samples_primary": tuning_num_samples_primary,
         "tuning_num_samples_helper": tuning_num_samples_helper,
         "search_space_sampler": search_space_sampler,
-        "initial_trial": None #sss.MAML_INTITIAL_TRIAL,
+        "initial_trial": sss.PROTONET_INTIAL_TRIAL_FOR_OPTUNA if algorithm == "ProtoNet" else None #sss.MAML_INTITIAL_TRIAL,
     }

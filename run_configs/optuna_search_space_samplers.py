@@ -51,7 +51,7 @@ def nn_search_space_sampler(optuna_trial):
             "model__batch_size": 16,
             "model__lr": 1e-3,
             "do_normalization_before_scaling": True,
-            "scaler__scale_factor": 100,
+            "scaler__scale_factor": 1e4,
             "model__num_layers": 2,
             "model__layer_sizes": None,
             "model__dropout_rate": 0.5,
@@ -61,9 +61,9 @@ def nn_search_space_sampler(optuna_trial):
             "model__log_metrics_every_n_epoch": 10,
             "model__log_gradients_every_n_epoch": 10,
         }
-    scale_factor_before_training = optuna_trial.suggest_int(
-        "scale_factor_before_training", 1, 1001, step=100
-    )
+    # scale_factor_before_training = optuna_trial.suggest_int(
+    #     "scale_factor_before_training", 1, 1001, step=100
+    # )
 
     # model__n_epochs = optuna_trial.suggest_int("model__n_epochs", 1, 200)
     model__batch_size = optuna_trial.suggest_int("model__batch_size", 8, 64, step=8)
@@ -112,7 +112,7 @@ def nn_search_space_sampler(optuna_trial):
         "model__batch_size": model__batch_size,
         "model__lr": model__lr,
         "do_normalization_before_scaling": True,
-        "scaler__scale_factor": scale_factor_before_training,
+        "scaler__scale_factor": 1e4,
         "model__num_layers": model__num_layers,
         "model__layer_sizes": model__layer_sizes,
         "model__dropout_rate": model__dropout_rate,
@@ -130,7 +130,7 @@ MAML_INTITIAL_TRIAL = {
     # Training configuration
     "max_epochs": 300,
     "do_normalization_before_scaling": True,
-    "scale_factor_before_training": 100,
+    "scale_factor_before_training": 1e4,
     "batch_size": 16,
     # Model architecture
     "model__num_layers": 2,
@@ -162,9 +162,9 @@ def maml_search_space_sampler(optuna_trial):
     # do_normalization_before_scaling = optuna_trial.suggest_categorical(
     #     "do_normalization_before_scaling", [True, False]
     # )
-    scale_factor_before_training = optuna_trial.suggest_int(
-        "scale_factor_before_training", 1, 1001, step=100
-    )
+    # scale_factor_before_training = optuna_trial.suggest_int(
+    #     "scale_factor_before_training", 1, 1001, step=100
+    # )
 
     # Model architecture hyperparameters
     model__num_layers = optuna_trial.suggest_int(
@@ -221,7 +221,7 @@ def maml_search_space_sampler(optuna_trial):
         # Training configuration
         "max_epochs": 300,
         "do_normalization_before_scaling": True,
-        "scale_factor_before_training": scale_factor_before_training,
+        "scale_factor_before_training": 1e4,
         # Model architecture
         "model__num_layers": model__num_layers,
         "model__layer_sizes": model__layer_sizes,
@@ -239,100 +239,109 @@ def reptile_search_space_sampler(optuna_trial):
         optuna_trial.suggest_float("betas_0", 0.0, 1),
         optuna_trial.suggest_float("betas_1", 0.0, 1),
     )
-    return maml_configs, initial_trial
+    return maml_configs
 
+
+PROTONET_INTIAL_TRIAL_FOR_OPTUNA = {
+    "model__starting_lr": 7.6267e-05,
+    "model__scheduler_gamma": 0.7,
+    "model__num_layers": 4,
+    "model__layer_0_size": 241,
+    "model__layer_1_size": 241,
+    "model__layer_2_size": 211,
+    "model__layer_3_size": 241,
+    "model__dropout_rate": 0.20665665125665642,
+    "model__activation": "relu",
+    "feature_reduction_n_components": 0,
+    "early_stopping_patience": 10,
+    "early_stopping_fraction": 0.2,
+}
 
 def protonet_search_space_sampler(optuna_trial):
     if optuna_trial is None:
         return {
-            "model__starting_lr": 0.01,
-            "model__scheduler_step": 50,
-            "model__scheduler_gamma": 0.5,
+            "model__starting_lr": 8e-05,
+            "model__scheduler_step": 30,
+            "model__scheduler_gamma": 0.8,
             "model__weight_decay": 0.0,
             "do_normalization_before_scaling": True,
-            "scale_factor_before_training": 100,
-            "model__num_layers": 3,
-            "model__layer_sizes": [2000, 1000, 500],
-            "model__dropout_rate": 0,
-            "model__layer_norm": False,
-            "model__batch_norm": True,
+            "scale_factor_before_training": 1e4,
+            "model__num_layers": 4,
+            "model__layer_sizes": [211, 31, 31, 31],
+            "model__dropout_rate": 0.213,
+            "model__layer_norm": 0,
+            "model__batch_norm": 1,
             "max_epochs": 500,
-            "model__activation": "relu",
+            "model__activation": 'relu',
+            "feature_reduction_n_components": 0,
+            "early_stopping_patience": 10,
+            "early_stopping_fraction": 0.2,
         }
 
     model__starting_lr = optuna_trial.suggest_float(
-        "model__starting_lr", 1e-4, 1e-1, log=True
+        "model__starting_lr", 5e-6, 5e-4, log=True,
     )
     model__scheduler_gamma = optuna_trial.suggest_float(
         "model__scheduler_gamma", 0.1, 1.0, step=0.1
     )
-    model__scheduler_step = optuna_trial.suggest_int(
-        "model__scheduler_step", 0, 100, step=10
-    ) if model__scheduler_gamma > 0 else 0
+    # model__scheduler_step = optuna_trial.suggest_int(
+    #     "model__scheduler_step", 1, 101, step=10
+    # )
     model__weight_decay = optuna_trial.suggest_float(
-        "model__weight_decay", 0.0, 1.0, step=0.1
+        "model__weight_decay", 0.0, 0.5, step=0.1
     )
-    scale_factor_before_training = optuna_trial.suggest_int(
-        "scale_factor_before_training", 1, 1001, step=100
-    )
+    # scale_factor_before_training = optuna_trial.suggest_int(
+    #     "scale_factor_before_training", 1, 1001, step=100
+    # )
 
-    # Model architecture hyperparameters
+    # # Model architecture hyperparameters
     model__num_layers = optuna_trial.suggest_int(
-        "model__num_layers", 2, 7
+        "model__num_layers", 1, 4
     )  # Number of hidden layers
 
-    # Option 2: Use a base size parameter for more control
-    base_size = optuna_trial.suggest_int(
-        "model__base_size", 16, 1024, step=16
-    )  # Much smaller maximum
-    reduction_factor = optuna_trial.suggest_float("model__reduction_factor", 1.0, 3.0)
-
-    # Dynamic creation of layer sizes based on num_layers
     model__layer_sizes = []
     for i in range(model__num_layers):
-        # Calculate size based on layer position
-        if i == 0:
-            # First layer size based on base_size
-            max_size = base_size
-        else:
-            # Subsequent layers get progressively smaller
-            max_size = max(8, int(model__layer_sizes[i - 1] / reduction_factor))
-
-        min_size = max(8, max_size // 4)  # Allow much smaller minimum sizes
-
-        # Suggest layer size
         layer_size = optuna_trial.suggest_int(
-            f"model__layer_{i}_size", min_size, max_size, step=8
+            f"model__layer_{i}_size", 1, 241, step=30
         )
-        model__layer_sizes.append(layer_size)
+        model__layer_sizes.append(layer_size) 
 
     # Model configuration parameters
     model__dropout_rate = optuna_trial.suggest_float("model__dropout_rate", 0.0, 0.7)
-    model__layer_norm = optuna_trial.suggest_categorical(
-        "model__layer_norm", [True, False]
-    )
-    model__weight_decay = optuna_trial.suggest_float("model__weight_decay", 0.0, 1.0)
-    model__batch_norm = optuna_trial.suggest_categorical(
-        "model__batch_norm", [True, False]
-    )
-    # # Don't use both layer norm and batch norm together
-    if model__layer_norm and model__batch_norm:
-        model__batch_norm = False
+    # model__layer_norm = optuna_trial.suggest_categorical(
+    #     "model__layer_norm", [True, False]
+    # )
+    # model__batch_norm = optuna_trial.suggest_categorical(
+    #     "model__batch_norm", [True, False]
+    # )
+    # # # Don't use both layer norm and batch norm together
+    # if model__layer_norm and model__batch_norm:
+    #     model__batch_norm = False
+
+    # model__activation = optuna_trial.suggest_categorical("model__activation", ["relu", "none"])
+
+    # feature_reduction_n_components = optuna_trial.suggest_int("feature_reduction_n_components", 500, 1500, 100)
+
+    early_stopping_patience = optuna_trial.suggest_int("early_stopping_patience", 6, 30, step=2)
+    # early_stopping_fraction = optuna_trial.suggest_float("early_stopping_fraction", 0.0, 0.4, step=0.1)
+
 
     return {
         "model__starting_lr": model__starting_lr,
-        "model__scheduler_step": model__scheduler_step,
+        "model__scheduler_step": 30,
         "model__scheduler_gamma": model__scheduler_gamma,
         "model__weight_decay": model__weight_decay,
         "do_normalization_before_scaling": True,
-        "scale_factor_before_training": scale_factor_before_training,
+        "scale_factor_before_training": 1e4,
         "model__num_layers": model__num_layers,
         "model__layer_sizes": model__layer_sizes,
         "model__dropout_rate": model__dropout_rate,
-        "model__layer_norm": model__layer_norm,
-        "model__batch_norm": model__batch_norm,
-        "max_epochs": 500,
+        "model__layer_norm": False,
+        "model__batch_norm": True,
+        "max_epochs": 200,
         "model__activation": "relu",
-        "model__base_size": base_size,
+        "feature_reduction_n_components": 0,
+        "early_stopping_patience": early_stopping_patience,
+        "early_stopping_fraction": 0.2,
     }
 

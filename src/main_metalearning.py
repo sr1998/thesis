@@ -10,8 +10,6 @@ import filelock
 import numpy as np
 import optuna
 import optuna.storages
-import optuna.terminator
-from optuna.visualization import plot_param_importances
 
 from src.data.dataloader import (
     get_cross_validation_sun_et_al_data_splits,
@@ -22,6 +20,7 @@ from src.helper_function import (
     get_run_dir_for_experiment,
     load_checkpoint,
     save_checkpoint,
+    set_seed,
 )
 from src.models.metalearning_helpers import (
     get_metalearning_model_from_trial,
@@ -56,7 +55,7 @@ def main(
     n_gradient_steps: int,  # TODO Could be a hyperparam
     n_parallel_tasks: int,  # TODO Could be a hyperparam
     train_k_shot: int,
-    splitting_method: str = "normal",  # "normal" or "study_wise"
+    splitting_method: str = "study_wise",  # "normal" or "study_wise"
     # eval_k_shot: int = None,              # skip
     # n_components_reduction_factor: int = 0,  # 0 or 1 for no PCA at all   # skip
     # use_cached_pca: bool = False,         # skip
@@ -65,12 +64,18 @@ def main(
     loss_fn: str = "BCELog",
     use_wandb: bool = True,
     features_to_use: list[str] = None,
-    early_stop_patience: int = None,
-    early_stop_metric: str = "loss",
+    # early_stop_patience: int = None,
+    # early_stop_metric: str = "loss",
     resume: bool = True,
     track_best_f1: bool = True,
     positive_class_label: str | None = None,
+    jitter_fraction: float = 0.0,
+    feature_reduction_alg: str = None,
+    random_seed: int = RANDOM_SEED,
+    extra_str_indicator: str = ""
 ):
+    set_seed(random_seed)
+    
     config_script = "run_configs.metalearning"
     config_module = import_module(config_script)
     setup = config_module.get_setup(algorithm)
@@ -93,22 +98,60 @@ def main(
 
     if datasource == "sun et al":
         data_root_dir = BASE_DATA_DIR / "sun_et_al_data"
+        if "stunt" in abundance_file:
+            # Read data and metadata
+            train_data = pd.read_csv(
+                f"{data_root_dir}/{abundance_file}",
+                index_col=0,
+                header=0,
+            ).reset_index(drop=True)
+            train_metadata = pd.read_csv(
+                f"{data_root_dir}/{metadata_file}",
+                index_col=0,
+                header=0,
+            ).reset_index(drop=True)
+            # They should already be ordered correctly
 
-        # Read data and metadata
-        sun_et_al_abundance = pd.read_csv(
-            f"{data_root_dir}/{abundance_file}",
-            index_col=0,
-            header=0,
-        )
-        sun_et_al_metadata = pd.read_csv(
-            f"{data_root_dir}/{metadata_file}",
-            index_col=0,
-            header=0,
-        )
-        sun_et_al_metadata = sun_et_al_metadata.loc[sun_et_al_abundance.index]
+            if features_to_use:
+                train_metadata = train_metadata.loc[:, features_to_use]
 
-        if features_to_use:
-            sun_et_al_abundance = sun_et_al_abundance.loc[:, features_to_use]
+
+            test_data = pd.read_csv(
+                f"{data_root_dir}/mpa4_species_profile_preprocessed.csv",
+                index_col=0,
+                header=0,
+            )
+
+            test_metadata = pd.read_csv(
+                f"{data_root_dir}/sample_group_species_preprocessed.csv",
+                index_col=0,
+                header=0,
+            )
+            test_metadata = test_metadata.loc[test_data.index, :]
+            grouped = test_metadata.groupby("Project_1")
+            for group, idx in grouped.groups.items():
+                if group == test_study:
+                    test_metadata = test_metadata.loc[idx, :]
+                    test_data = test_data.loc[idx, :]
+
+            sun_et_al_abundance = pd.concat([train_data, test_data])
+            sun_et_al_metadata = pd.concat([train_metadata, test_metadata])
+        else:
+            # Read data and metadata
+            sun_et_al_abundance = pd.read_csv(
+                f"{data_root_dir}/{abundance_file}",
+                index_col=0,
+                header=0,
+            )
+            sun_et_al_metadata = pd.read_csv(
+                f"{data_root_dir}/{metadata_file}",
+                index_col=0,
+                header=0,
+            )
+            sun_et_al_metadata = sun_et_al_metadata.loc[sun_et_al_abundance.index]
+
+            if features_to_use:
+                sun_et_al_abundance = sun_et_al_abundance.loc[:, features_to_use]
 
         # Get the data splits: outer and inner cross val splits
         (
@@ -152,22 +195,13 @@ def main(
         # "e_k" + str(eval_k_shot),
     ]
 
-    wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}"
+    wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_{extra_str_indicator}"
     # Set up checkpoint path and load checkpoint if resuming
     resume_dir = get_resume_dir_for_experiment(
         "metalearning", algorithm, test_study, wandb_name
     )
     checkpoint_path = str(resume_dir / "checkpoint.yaml")
-    checkpoint = load_checkpoint(checkpoint_path) or {
-        "completed_folds": [],
-        "trials_done_per_job": {},
-        "wandb_run_id": None,
-        "fold_metrics": {},
-        "warmup_completed": False,  # Flag for initial warmup phase
-        "optimization_done": False,  # Flag for optimization completion
-        "best_trial_params": None,
-        "primary_job_id": None,
-    }
+    checkpoint = load_checkpoint(checkpoint_path, resume)
 
     config = {
         # "model_name": model_name,
@@ -203,13 +237,16 @@ def main(
         "resume": resume,
         "track_best_f1": track_best_f1,
         "splitting_method": splitting_method,
-        "early_stop_patience": early_stop_patience,
-        "early_stop_metric": early_stop_metric,
+        # "early_stop_patience": early_stop_patience,
+        # "early_stop_metric": early_stop_metric,
         "positive_class_label": positive_class_label,
+        "random_seed": random_seed,
+        "extra_str_indicator": extra_str_indicator,
+        "jitter_fraction": jitter_fraction,
+        "feature_reduction_alg": feature_reduction_alg,
         "job_id": job_id,
         "array_job_id": array_job_id,
         "array_task_id": array_task_id,
-        "job_history": [f"{array_job_id or job_id}_{array_task_id or ''}"],
     }
 
     # Initialize wandb if enabled
@@ -222,6 +259,8 @@ def main(
                     current_job += f"_{array_task_id}"
 
                 # Add current job ID to history
+                if "job_history" not in config:
+                    config["job_history"] = []
                 config["job_history"].append(current_job)
 
                 # Update run name to indicate multiple jobs
@@ -310,7 +349,8 @@ def main(
         if trials_to_do > 0 and not checkpoint["optimization_done"]:
             # Primary job handles warmup phase
             if is_primary and not checkpoint.get("warmup_completed", False):
-                optuna_study.enqueue_trial(initial_trial)
+                if initial_trial:
+                    optuna_study.enqueue_trial(initial_trial)
                 logger.info(
                     f"Primary job running warmup phase: {n_warmup_trials} trials"
                 )
@@ -325,8 +365,8 @@ def main(
                         search_space_sampler,
                         trial,
                         config,
-                        early_stop_pat=early_stop_patience,
-                        early_stop_metric=early_stop_metric,
+                        # early_stop_pat=early_stop_patience,
+                        # early_stop_metric=early_stop_metric,
                     ),
                     n_trials=n_warmup_trials,
                     callbacks=[
@@ -346,7 +386,7 @@ def main(
 
             # Wait for warmup to complete if this is a helper job
             if not is_primary:
-                max_wait = 60 * 30  # 30 minutes max wait
+                max_wait = 60 * 120  # 120 minutes max wait
                 wait_interval = 60  # check every 60 seconds
                 waited = 0
                 with filelock.FileLock(checkpoint_path + ".lock", timeout=30):
@@ -383,8 +423,8 @@ def main(
                         search_space_sampler,
                         trial,
                         config,
-                        early_stop_pat=early_stop_patience,
-                        early_stop_metric=early_stop_metric,
+                        # early_stop_pat=early_stop_patience,
+                        # early_stop_metric=early_stop_metric,
                     ),
                     n_trials=trials_to_do,
                     callbacks=[
@@ -445,6 +485,8 @@ def main(
         save_checkpoint(checkpoint_path, checkpoint)
 
     best_trial_config = search_space_sampler(best_trial)
+    wandb.log(best_trial_config)
+    logger.info(f"best_trail_config:\n{best_trial_config}")
 
     for i, test_support_set in test_loop_data_selection.items():
         fold_id = str(i)
@@ -481,7 +523,7 @@ def main(
             #     if best_trial and "actual_epochs" in best_trial.user_attrs
             #     else 100
             # )
-            n_epochs = 1000
+            n_epochs = 200
 
             train_res, test_res = best_model.fit(
                 train_dataloader=train_loader,
@@ -490,10 +532,13 @@ def main(
                 eval_dataloader=test_loader,
                 val_or_test="test",
                 log_metrics=True,
-                log_gradients=True,
+                log_gradients=False,
                 score_name_prefix=f"outer_fold_{i}_fit",
                 save_best_model_path=run_dir / f"best_model_outer_fold_{i}.pt",
                 track_best_f1=track_best_f1,
+                early_stopping_patience=best_trial_config["early_stopping_patience"],
+                early_stopping_fraction=best_trial_config["early_stopping_fraction"],
+                # early_stopping_metric=early_stop_metric
             )
 
             train_res = (

@@ -1,3 +1,4 @@
+from functools import partial
 from math import ceil
 import os
 
@@ -7,6 +8,8 @@ import pandas as pd
 from loguru import logger
 from sklearn.calibration import LabelEncoder
 from sklearn.preprocessing import Normalizer
+from sklearn.decomposition import FastICA, PCA
+from src.preprocessing.functions import pandas_label_encoder
 from torch.utils.data import DataLoader
 
 import wandb
@@ -30,6 +33,8 @@ def get_metalearning_model_from_trial(
 ) -> tuple[maml_with_l2l.MAML, DataLoader, DataLoader]:
     do_normalization_before_scaling = trial_config["do_normalization_before_scaling"]
     scale_factor_before_training = trial_config["scale_factor_before_training"]
+    feature_reduction_alg = extra_configs["feature_reduction_alg"]
+    feature_reduction_n_components = trial_config["feature_reduction_n_components"]
 
     # normalize the data
     if do_normalization_before_scaling:
@@ -49,8 +54,17 @@ def get_metalearning_model_from_trial(
         #     columns=test_data.columns,
         # )
 
-    train_data = train_data * scale_factor_before_training
-    eval_data = eval_data * scale_factor_before_training
+    if feature_reduction_n_components != 0 and (feature_reduction_alg is not None or feature_reduction_alg):
+        logger.info(f"Doing {feature_reduction_alg}")
+        train_data = train_data * scale_factor_before_training
+        if feature_reduction_alg == "PCA":
+            feature_reduction = PCA(n_components=feature_reduction_n_components)
+        elif feature_reduction_alg == "ICA":
+            feature_reduction = FastICA(n_components=feature_reduction_n_components)
+        feature_reduction = feature_reduction.fit(train_data)
+        train_data = pd.DataFrame(feature_reduction.transform(train_data), index=train_data.index)
+        eval_data = eval_data * scale_factor_before_training
+        eval_data = pd.DataFrame(feature_reduction.transform(eval_data), index=eval_data.index)
 
     train_metadata = column_rename_for_sun_et_al_metadata(train_metadata)
     eval_metadata = column_rename_for_sun_et_al_metadata(eval_metadata)
@@ -93,16 +107,16 @@ def get_metalearning_model_from_trial(
     elif extra_configs["splitting_method"] == "study_wise":
         n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
         # Create Datasets for DataLoader
-        train = MicrobiomeDataset(train_data, train_metadata)
+        train = MicrobiomeDataset(train_data, train_metadata, jitter_fraction=extra_configs["jitter_fraction"], target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"]))
         eval = MicrobiomeDataset(
-            eval_data, eval_metadata, preselected_support_set=eval_support_sets
+            eval_data, eval_metadata, preselected_support_set=eval_support_sets, jitter_fraction=0.0, target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"])
         )
 
         # Create DataLoaders
         sampler = BinaryFewShotBatchSampler(
             train,
             train_k_shot,
-            include_query=True if algorithm == "MAML" else False,
+            include_query=True if algorithm != "Reptile" else False,
             shuffle=True,
         )
         train_loader = DataLoader(train, batch_sampler=sampler, num_workers=n_cpus, pin_memory=True)
@@ -137,6 +151,7 @@ def get_metalearning_model_from_trial(
         layer_norm=trial_config["model__layer_norm"],
         batch_norm=trial_config["model__batch_norm"],
         activation=trial_config["model__activation"],
+        make_output_binary=False if algorithm=="ProtoNet" else True,
     ).to(extra_configs["device"])
 
     if algorithm == "MAML":
@@ -177,6 +192,12 @@ def get_metalearning_model_from_trial(
             weight_decay=trial_config["model__weight_decay"],
         )
     elif algorithm == "ProtoNet":
+        train_labels_unordered = encode_labels(LabelEncoder(), train_metadata["label"], extra_configs["positive_class_label"])
+        class_weights_dict = train_labels_unordered.value_counts(normalize=True).to_dict()
+        class_weights = []
+        for i in range(len(class_weights_dict)):
+            class_weights.append(class_weights_dict[i])
+
         model = protonet.ProtonetTrainer(
             model=model,
             device=extra_configs["device"],
@@ -186,6 +207,7 @@ def get_metalearning_model_from_trial(
             scheduler_step=trial_config["model__scheduler_step"],
             scheduler_gamma=trial_config["model__scheduler_gamma"],
             weight_decay=trial_config["model__weight_decay"],
+            class_weights_loss_fn=class_weights
         )
     else:
         raise ValueError(f"Unknown algorithm: {algorithm}")
@@ -204,8 +226,8 @@ def hyp_param_val_for_metalearning(
     search_space_sampler: callable,
     trial: optuna.Trial,
     extra_configs: dict,
-    early_stop_pat=None,
-    early_stop_metric="loss",
+    # early_stop_pat=None,
+    # early_stop_metric="loss",
 ):
     if val_k_shot is None:
         val_k_shot = train_k_shot
@@ -241,8 +263,9 @@ def hyp_param_val_for_metalearning(
             n_epochs=trial_config["max_epochs"],
             n_parallel_tasks=extra_configs["n_parallel_tasks"],
             eval_dataloader=val_loader,
-            early_stopping_patience=early_stop_pat,
-            early_stopping_metric=early_stop_metric,
+            early_stopping_patience=trial_config["early_stopping_patience"],
+            early_stopping_fraction=trial_config["early_stopping_fraction"],
+            # early_stopping_metric=early_stop_metric,
             log_metrics=False,  # Disable wandb logging during optimization
             track_best_f1=extra_configs["track_best_f1"],
         )
@@ -309,5 +332,5 @@ def hyp_param_val_for_metalearning(
     )
     best_scorer_name = "val/best_" + extra_configs["best_fit_scorer"]
     best_scorer_name = best_scorer_name if best_scorer_name in cross_val_results else "val/" + extra_configs["best_fit_scorer"]
-
+    logger.info(f"best scorer = {best_scorer_name}")
     return np.mean(cross_val_results[best_scorer_name])

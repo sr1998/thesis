@@ -1,20 +1,21 @@
 #!/bin/sh
-#SBATCH --job-name="metalearning"
-#SBATCH --partition=general,insy # Request partition.
-#SBATCH --qos=medium                # This is how you specify QoS
-#SBATCH --time=10:00:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --job-name="early_stopping"
+#SBATCH --partition=general,insy,prb,influence # Request partition.
+#SBATCH --qos=short                # This is how you specify QoS
+#SBATCH --time=4:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
 #SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem=2GB                  # Request ... GB of RAM in total
-#SBATCH --gres=gpu:a40:1        # Request 1 GPU (A40) per node
+#SBATCH --mem=4GB                  # Request ... GB of RAM in total
+#SBATCH --gres=gpu:1        # Request 1 GPU (A40) per node
+#SBATCH --mail-type=FAIL
 
 # If you use DATASETS_ROOT inside your script otherwise remove
 # export DATASETS_ROOT="/scratch/$USER/datasets"
-BALANCED_OR_UNBALANCED="balanced" # or "unbalanced"
-ALGORITHM="Reptile"
-SPLITTING_METHOD="normal" # normal or study_wise
+BALANCED_OR_UNBALANCED="unbalanced" # or "unbalanced"
+ALGORITHM="ProtoNet"
+SPLITTING_METHOD="study_wise" # normal or study_wise
 STUDIES=(
     'ChenB_2020' 'YeZ_2018' 'ChuY_2021' 'ZhouC_2020' 'YeohYK_2021'
     'HeQ_2017' 'HuY_2019' 'HuangR_2020' 'LiJ_2017' 'LiR_2021'
@@ -79,7 +80,11 @@ srun apptainer exec \
     --n_parallel_tasks 5 \
     --train_k_shot 10 \
     --positive_class_label "Disease" \
-    --splitting_method="normal" \
+    --splitting_method="${SPLITTING_METHOD}" \
+    --resume=True \
+    --jitter_fraction 0.0 \
+    --extra_str_indicator="early_stopping_larger"
+    # --feature_reduction_alg="PCA"
 
     
     # --what "sun et al" \

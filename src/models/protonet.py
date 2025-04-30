@@ -12,6 +12,199 @@ import wandb
 from src.models.helper_functions import batch_tasks, set_learning_rate
 from src.scoring.metalearning_scoring_fn import compute_metrics
 
+from typing import List
+
+import torch
+import torch.nn.functional as F
+from torch import Tensor
+from torch.nn.modules.loss import _Loss
+
+
+def soft_dice_score(
+    output: torch.Tensor, target: torch.Tensor, smooth: float = 0.0, eps: float = 1e-7, dims=None
+) -> torch.Tensor:
+    """
+
+    :param output:
+    :param target:
+    :param smooth:
+    :param eps:
+    :return:
+
+    Shape:
+        - Input: :math:`(N, NC, *)` where :math:`*` means any number
+            of additional dimensions
+        - Target: :math:`(N, NC, *)`, same shape as the input
+        - Output: scalar.
+
+    """
+    if output.shape[1] == 2:
+        output = output[:, 1:2]  # Take only positive class probability
+    
+    # Ensure target has same shape as output
+    if target.dim() == 1:
+        target = target.unsqueeze(1)
+
+    print(target)
+    print(output)
+        
+    assert output.size() == target.size()
+    if dims is not None:
+        intersection = torch.sum(output * target, dim=dims)
+        cardinality = torch.sum(output + target, dim=dims)
+    else:
+        intersection = torch.sum(output * target)
+        cardinality = torch.sum(output + target)
+    dice_score = (2.0 * intersection + smooth) / (cardinality + smooth).clamp_min(eps)
+    return dice_score
+
+BINARY_MODE = "binary"
+MULTICLASS_MODE = "multiclass"
+MULTILABEL_MODE = "multilabel"
+
+
+class DiceLoss(_Loss):
+    """
+    Implementation of Dice loss for image segmentation task.
+    It supports binary, multiclass and multilabel cases
+    """
+
+    def __init__(
+        self,
+        mode: str,
+        classes: List[int] = None,
+        log_loss=False,
+        from_logits=True,
+        smooth: float = 0.0,
+        ignore_index=None,
+        eps=1e-7,
+    ):
+        """
+
+        :param mode: Metric mode {'binary', 'multiclass', 'multilabel'}
+        :param classes: Optional list of classes that contribute in loss computation;
+        By default, all channels are included.
+        :param log_loss: If True, loss computed as `-log(jaccard)`; otherwise `1 - jaccard`
+        :param from_logits: If True assumes input is raw logits
+        :param smooth:
+        :param ignore_index: Label that indicates ignored pixels (does not contribute to loss)
+        :param eps: Small epsilon for numerical stability
+        """
+        assert mode in {BINARY_MODE, MULTILABEL_MODE, MULTICLASS_MODE}
+        super(DiceLoss, self).__init__()
+        self.mode = mode
+        if classes is not None:
+            assert mode != BINARY_MODE, "Masking classes is not supported with mode=binary"
+            classes = torch.tensor(classes, dtype=torch.long)
+
+        self.classes = classes
+        self.from_logits = from_logits
+        self.smooth = smooth
+        self.eps = eps
+        self.ignore_index = ignore_index
+        self.log_loss = log_loss
+
+    def forward(self, y_pred: Tensor, y_true: Tensor) -> Tensor:
+        """
+
+        :param y_pred: NxCxHxW
+        :param y_true: NxHxW
+        :return: scalar
+        """
+        assert y_true.size(0) == y_pred.size(0)
+
+        if self.from_logits:
+            # Apply activations to get [0..1] class probabilities
+            # Using Log-Exp as this gives more numerically stable result and does not cause vanishing gradient on
+            # extreme values 0 and 1
+            if self.mode == MULTICLASS_MODE:
+                y_pred = y_pred.log_softmax(dim=1).exp()
+            else:
+                y_pred = F.logsigmoid(y_pred).exp()
+
+        bs = y_true.size(0)
+        num_classes = y_pred.size(1)
+        dims = None
+
+        # if self.mode == BINARY_MODE:
+        #     y_true = y_true.view(bs, 1, -1)
+        #     y_pred = y_pred.view(bs, 1, -1)
+
+        #     if self.ignore_index is not None:
+        #         mask = y_true != self.ignore_index
+        #         y_pred = y_pred * mask
+        #         y_true = y_true * mask
+
+        if self.mode == MULTICLASS_MODE:
+            y_true = y_true.view(bs, -1)
+            y_pred = y_pred.view(bs, num_classes, -1)
+
+            if self.ignore_index is not None:
+                mask = y_true != self.ignore_index
+                y_pred = y_pred * mask.unsqueeze(1)
+
+                y_true = F.one_hot((y_true * mask).to(torch.long), num_classes)  # N,H*W -> N,H*W, C
+                y_true = y_true.permute(0, 2, 1) * mask.unsqueeze(1)  # H, C, H*W
+            else:
+                y_true = F.one_hot(y_true, num_classes)  # N,H*W -> N,H*W, C
+                y_true = y_true.permute(0, 2, 1)  # H, C, H*W
+
+        if self.mode == MULTILABEL_MODE:
+            y_true = y_true.view(bs, num_classes, -1)
+            y_pred = y_pred.view(bs, num_classes, -1)
+
+            if self.ignore_index is not None:
+                mask = y_true != self.ignore_index
+                y_pred = y_pred * mask
+                y_true = y_true * mask
+
+        scores = soft_dice_score(y_pred, y_true.type_as(y_pred), smooth=self.smooth, eps=self.eps, dims=dims)
+
+        if self.log_loss:
+            loss = -torch.log(scores.clamp_min(self.eps))
+        else:
+            loss = 1.0 - scores
+
+        # Dice loss is undefined for non-empty classes
+        # So we zero contribution of channel that does not have true pixels
+        # NOTE: A better workaround would be to use loss term `mean(y_pred)`
+        # for this case, however it will be a modified jaccard loss
+
+        mask = y_true.sum(dims) > 0
+        loss *= mask.to(loss.dtype)
+
+        if self.classes is not None:
+            loss = loss[self.classes]
+
+        return loss.mean()
+    
+ALPHA = 0.5
+BETA = 0.5
+GAMMA = 1
+
+class FocalTverskyLoss(torch.nn.Module):
+    def __init__(self, weight=None, size_average=True):
+        super(FocalTverskyLoss, self).__init__()
+
+    def forward(self, inputs, targets, smooth=1, alpha=ALPHA, beta=BETA, gamma=GAMMA):
+        
+        #comment out if your model contains a sigmoid or equivalent activation layer
+        inputs = F.sigmoid(inputs)       
+        
+        #flatten label and prediction tensors
+        inputs = inputs.view(-1)
+        targets = targets.view(-1)
+        
+        #True Positives, False Positives & False Negatives
+        TP = (inputs * targets).sum()    
+        FP = ((1-targets) * inputs).sum()
+        FN = (targets * (1-inputs)).sum()
+        
+        Tversky = (TP + smooth) / (TP + alpha*FP + beta*FN + smooth)  
+        FocalTversky = (1 - Tversky)**gamma
+                       
+        return FocalTversky
+
 
 def euclidean_dist(x, y):
     # # Code taken from https://github.com/jakesnell/prototypical-networks/blob/master/protonets/models/few_shot.py
@@ -80,6 +273,69 @@ class ProtoNet(nn.Module):
         """
         super().__init__()
         self.encoder = encoder
+        self.dice_loss = DiceLoss(mode="binary")
+        self.focal_tversky_loss = FocalTverskyLoss()
+
+    @staticmethod
+    def calculate_prototypes_robust(features, targets, alpha=0.9):
+        """
+        Calculate class prototypes with moving average for stability,
+        properly detached from computation graph
+        
+        Args:
+            features: Feature vectors [N, feature_dim]
+            targets: Class labels [N]
+            alpha: Moving average factor (higher means more weight to previous prototypes)
+        """
+        classes, _ = torch.unique(targets).sort()
+        
+        # Initialize prototypes dictionary if not already created
+        if not hasattr(ProtoNet, 'prototype_dict'):
+            ProtoNet.prototype_dict = {}
+        
+        prototypes = []
+        for c in classes:
+            # Calculate current prototype for this class
+            c_idx = torch.where(targets == c)[0]
+            if len(c_idx) == 0:
+                continue
+                
+            # Compute current prototype and detach from computation graph
+            current_prototype = features[c_idx].mean(dim=0)
+            
+            # Apply moving average if we have a previous prototype
+            c_key = c.item()  # Convert tensor to Python scalar for dict key
+            if c_key in ProtoNet.prototype_dict:
+                # Get previous prototype (already detached)
+                prev_prototype = ProtoNet.prototype_dict[c_key]
+                
+                # Compute smoothed prototype and detach from computation graph
+                smooth_prototype = alpha * prev_prototype + (1 - alpha) * current_prototype.detach()
+                
+                # Store the detached value
+                ProtoNet.prototype_dict[c_key] = smooth_prototype.detach()
+            else:
+                # First time seeing this class, store detached prototype
+                ProtoNet.prototype_dict[c_key] = current_prototype.detach()
+                smooth_prototype = current_prototype  # Keep in computation graph for current iteration
+                
+            # For the current forward pass, use the prototype WITH gradient connections
+            # This ensures gradient flow during the current iteration
+            if c_key in ProtoNet.prototype_dict:
+                # Use stored prototype as starting point but allow gradients for this iteration
+                stored_prototype = ProtoNet.prototype_dict[c_key]
+                # Create a new tensor with the same values but that requires grad
+                smooth_prototype = alpha * stored_prototype + (1 - alpha) * current_prototype
+            else:
+                smooth_prototype = current_prototype
+                
+            prototypes.append(smooth_prototype)
+        
+        if not prototypes:  # Handle edge case
+            return None, classes
+            
+        prototypes = torch.stack(prototypes, dim=0)
+        return prototypes, classes
 
     @staticmethod
     def calculate_prototypes(features, targets):
@@ -101,14 +357,31 @@ class ProtoNet(nn.Module):
         labels = (classes[None, :] == targets[:, None]).long().argmax(dim=-1)
         # acc = (preds.argmax(dim=1) == labels).float().mean()
         return preds, labels
+    
+    def classify_feats_with_cosine_similarity(self, prototypes, classes, feats, targets):
+        # Use cosine similarity instead of Euclidean distance
+        # Normalize the feature vectors and prototypes
+        feats_norm = F.normalize(feats, p=2, dim=1)
+        prototypes_norm = F.normalize(prototypes, p=2, dim=1)
+        
+        # Compute cosine similarity (dot product of normalized vectors)
+        similarity = torch.matmul(feats_norm, prototypes_norm.t())
+        
+        # Convert similarity to log probabilities
+        preds = F.log_softmax(similarity, dim=1)
+        labels = (classes[None, :] == targets[:, None]).long().argmax(dim=-1)
+    
+        return preds, labels
 
-    def loss(self, X_support, X_query, y_support, y_query):
+    def loss(self, X_support, X_query, y_support, y_query, class_weights_loss_fn):
         # Determine training loss for a given support and query set
         support_feats = self.encoder(X_support)
         query_feats = self.encoder(X_query)
         prototypes, classes = ProtoNet.calculate_prototypes(support_feats, y_support)
         preds, labels = self.classify_feats(prototypes, classes, query_feats, y_query)
-        loss = F.cross_entropy(preds, labels)
+        loss = F.cross_entropy(preds, labels, weight=class_weights_loss_fn)
+        # loss = self.dice_loss(preds, labels)
+        # loss = self.focal_tversky_loss(preds, labels)
         # loss = F.nll_loss(preds, labels)  # Negative log likelihood loss
         return loss, preds.argmax(dim=1), labels
 
@@ -127,6 +400,8 @@ class ProtonetTrainer:
         scheduler_step: int = 50,
         scheduler_gamma: float = 0.5,
         weight_decay: float = 0.0,
+        class_weights_loss_fn = (.5, .5),
+        evaluate_every: int = 10,
     ):
         # Store model and configuration
         self.protonet = ProtoNet(model).to(device)
@@ -139,6 +414,7 @@ class ProtonetTrainer:
         self.train_k_shot = train_k_shot
         self.eval_k_shot = eval_k_shot or train_k_shot
         self.weight_decay = weight_decay
+        self.class_weights_loss_fn = torch.tensor(class_weights_loss_fn).to(device)
 
         # Training state
         self.optimizer = None
@@ -154,14 +430,13 @@ class ProtonetTrainer:
             step_size=self.scheduler_step,
             gamma=self.scheduler_gamma,
         )
+        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=self.scheduler_gamma)
 
-    def step_scheduler(self):
-        """Step the learning rate scheduler."""
-        self.scheduler.step()
-
+        self.evaluate_every = evaluate_every
+        
     def _log_gradients(self, epoch, score_name_prefix):
         """Log gradient statistics to wandb"""
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % self.evaluate_every == 0:
             with no_grad():
                 for name, param in self.protonet.named_parameters():
                     if param.grad is not None:
@@ -194,13 +469,15 @@ class ProtonetTrainer:
         val_or_test: str = "val",
         early_stopping_patience: int = None,
         early_stopping_metric: str = "loss",
+        early_stopping_fraction: float = 0.0,
         log_metrics: bool = True,
         log_gradients: bool = False,
         score_name_prefix: str = None,
         save_best_model_path: str = None,
         track_best_f1: bool = True,
         load_best_model: bool = False,
-        **kwargs,  # to be ignored
+        # accumulation_steps: int = 5,
+        **kwargs,  # to sbe ignored
     ):
         self.protonet.train()
         score_name_prefix = score_name_prefix + "." if score_name_prefix else ""
@@ -209,17 +486,20 @@ class ProtonetTrainer:
         )
 
         patience_counter = 0
+        n_es = max(1, int(len(train_dataloader) * early_stopping_fraction))
+
 
         # Best F1 tracking
         best_f1 = -float("inf")
         best_f1_epoch = 0
         best_model_state = None
+        all_f1_scores = []
 
         for epoch in range(n_epochs):
-            if epoch % 10 == 0:
+            if epoch % self.evaluate_every == 0:
                 logger.info(f"Epoch {epoch+1}/{n_epochs}")
-            # log every 10 epochs, overwriting previous log
-            if log_metrics and epoch % 10 == 0:
+            # log every {self.evaluate_every} epochs, overwriting previous log
+            if log_metrics and (epoch % self.evaluate_every == 0 or epoch <= 20):
                 train_results = self.evaluate(
                     train_dataloader, f"{score_name_prefix}train", epoch, log_metrics
                 )
@@ -230,11 +510,12 @@ class ProtonetTrainer:
                     eval_dataloader,
                     f"{score_name_prefix}{val_or_test}",
                     epoch,
-                    log_metrics=True if epoch % 10 == 0 and log_metrics else False,
+                    log_metrics=True if (epoch % self.evaluate_every == 0 or epoch <= 20) and log_metrics else False,
                 )
+                all_f1_scores.append(val_result["f1"])
 
                 # Track best F1 score
-                if track_best_f1 and "f1" in val_result and val_result["f1"] > best_f1:
+                if track_best_f1 and "f1" in val_result and val_result["f1"] > best_f1 and epoch > 0.1*n_epochs:
                     best_f1 = val_result["f1"]
                     best_f1_epoch = epoch
 
@@ -252,66 +533,101 @@ class ProtonetTrainer:
                             f"Saved new best F1 model with F1 = {best_f1:.4f} at epoch {epoch+1}"
                         )
 
-                # Early stopping check
-                if early_stopping_patience:
-                    current_metric = val_result[early_stopping_metric]
-
-                    improved = (
-                        early_stopping_metric == "loss"
-                        and current_metric < best_metric_value
-                    ) or (
-                        early_stopping_metric != "loss"
-                        and current_metric > best_metric_value
-                    )
-
-                    if improved:
-                        best_metric_value = current_metric
-                        patience_counter = 0
-
-                        # Save the best model
-                        if save_best_model_path:
-                            torch_save(self, save_best_model_path)
-                            logger.info(
-                                f"Saved new best model with {early_stopping_metric} = {current_metric:.4f}"
-                            )
-                    else:
-                        patience_counter += 1
-
-                    if patience_counter >= early_stopping_patience:
-                        logger.info(f"Early stopping triggered after {epoch+1} epochs")
-                        break
-
             self.current_epoch = epoch
+            es_batches = []
+            train_iter = iter(train_dataloader)
+            # Get earlt stopping data
+            with no_grad():
+                for _ in range(n_es):
+                    X, y = next(train_iter)
+                    es_batches.append((X.clone().detach(), y.clone().detach()))
 
-            for i, (X, y) in enumerate(train_dataloader):
+            # Early stopping check
+            if early_stopping_patience:
+                early_stopping_res = self.evaluate(
+                    es_batches, f"{score_name_prefix}_es", epoch, log_metrics=False
+                )
+                current_metric = early_stopping_res[early_stopping_metric]
+
+                improved = (
+                    early_stopping_metric == "loss"
+                    and current_metric < best_metric_value
+                ) or (
+                    early_stopping_metric != "loss"
+                    and current_metric > best_metric_value
+                )
+
+                if improved:
+                    best_metric_value = current_metric
+                    patience_counter = 0
+
+                    # Save the best model
+                    if save_best_model_path:
+                        torch_save(self, save_best_model_path)
+                        logger.info(
+                            f"Saved new best model with {early_stopping_metric} = {current_metric:.4f}"
+                        )
+                else:
+                    patience_counter += 1
+
+                if patience_counter >= early_stopping_patience:
+                    logger.info(f"Early stopping triggered after {epoch+1} epochs")
+                    break
+
+            self.optimizer.zero_grad()
+
+            for X, y in train_iter:
                 X, y = X.to(self.device), y.to(self.device, dtype=torch.int64)
                 X_support = X[: self.train_k_shot * 2, :]
                 y_support = y[: self.train_k_shot * 2]
                 X_query = X[self.train_k_shot * 2 :, :]
                 y_query = y[self.train_k_shot * 2 :]
 
-                loss, y_hat, target_inds = self.protonet.loss(X_support, X_query, y_support, y_query)
+                loss, y_hat, target_inds = self.protonet.loss(X_support, X_query, y_support, y_query, self.class_weights_loss_fn)
+
+                # # Normalize loss by accumulation steps to maintain the same scale
+                # normalized_loss = loss / accumulation_steps
+                # normalized_loss.backward()
+                # torch.nn.utils.clip_grad_norm_(self.protonet.parameters(), max_norm=1.0)
+
                 loss.backward()
                 self.optimizer.step()
 
+                # if i == 0:
+                #     print(f"starting new epoch {epoch}")
+                # if (i + 1) % accumulation_steps == 0 or i == len(train_dataloader) - 1:
+                #     # Perform optimization step with accumulated gradients
+                #     self.optimizer.step()
+                #     # Log gradients if enabled
+                #     if log_gradients:
+                #         self._log_gradients(epoch, f"{score_name_prefix}train")
+                    
+                #     # Reset gradients for next accumulation
+                #     self.optimizer.zero_grad()
+                    
+                # Log gradients if enabled
                 if log_gradients:
                     self._log_gradients(epoch, f"{score_name_prefix}train")
-
+                
+                # Reset gradients for next accumulation
                 self.optimizer.zero_grad()
             
-            self.step_scheduler()
+            self.scheduler.step()
+            # self.scheduler.step(val_result["loss"])
 
         train_results = self.evaluate(
-            train_dataloader, f"{score_name_prefix}train", n_epochs, log_metrics
+            train_dataloader, f"{score_name_prefix}train", epoch+1, log_metrics
         )
 
         # Validation phase
         val_result = self.evaluate(
             eval_dataloader,
             f"{score_name_prefix}{val_or_test}",
-            n_epochs,
+            epoch+1,
             log_metrics=log_metrics,
         )
+
+        all_f1_scores.append(val_result["f1"])
 
         # Include best F1 information in results WITHOUT overriding original f1
         if track_best_f1:
@@ -345,6 +661,7 @@ class ProtonetTrainer:
                 f"Loaded best F1 model with F1 = {best_f1:.4f} from epoch {best_f1_epoch+1}"
             )
 
+        val_result["averaged_f1_score"] = sum(all_f1_scores[-10:]) / 10
         return train_results, val_result
 
     def evaluate(
@@ -355,26 +672,34 @@ class ProtonetTrainer:
         log_metrics: bool = True,
     ):
         self.protonet.eval()
-        if hasattr(dataloader.dataset, "training"):
-            dataloader_original_training_state = dataloader.dataset.training
-            dataloader.dataset.training = False
-        if hasattr(dataloader.batch_sampler, "use_all_remaining"):
-            dataloader_original_use_all_remaining_state = dataloader.batch_sampler.use_all_remaining
-            dataloader.batch_sampler.use_all_remaining = True
+        if isinstance(dataloader, DataLoader):
+            if hasattr(dataloader.batch_sampler, "training"):
+                dataloader_original_training_state = dataloader.batch_sampler.training
+                dataloader.batch_sampler.training = False
+            if hasattr(dataloader.batch_sampler, "use_all_remaining"):
+                dataloader_original_use_all_remaining_state = dataloader.batch_sampler.use_all_remaining
+                dataloader.batch_sampler.use_all_remaining = True
 
         results = {}
-        for i, (X, y) in enumerate(dataloader):
-            X, y = X.to(self.device), y.to(self.device, dtype=torch.int64)
-            X_support = X[: self.train_k_shot * 2, :]
-            y_support = y[: self.train_k_shot * 2]
-            X_query = X[self.train_k_shot * 2 :, :]
-            y_query = y[self.train_k_shot * 2 :]
+        # task_results = {}
+        with torch.no_grad():
+            for i, (X, y) in enumerate(dataloader):
+                # task_results[str(i)] = {}
+                X, y = X.to(self.device), y.to(self.device, dtype=torch.int64)
+                # task_results[str(i)]["n_samples"] = X.shape[0]
+                X_support = X[: self.train_k_shot * 2, :]
+                y_support = y[: self.train_k_shot * 2]
+                X_query = X[self.train_k_shot * 2 :, :]
+                y_query = y[self.train_k_shot * 2 :]
 
-            loss, y_hat, target_inds = self.protonet.loss(X_support, X_query, y_support, y_query)
-            results["loss"] = loss.item()
-            metrics = compute_metrics(y_hat, target_inds)
-            for key in metrics:
-                results[key] = float(metrics[key])
+                loss, y_hat, target_inds = self.protonet.loss(X_support, X_query, y_support, y_query, self.class_weights_loss_fn)
+                results["loss"] = loss.item()
+                # task_results[str(i)][f"{score_name_prefix}/loss"] = results["loss"]
+                metrics = compute_metrics(y_hat, target_inds)
+                for key in metrics:
+                    results[key] = float(metrics[key])
+                    # task_results[str(i)][f"{score_name_prefix}/{key}"] = results[key]
+                # task_results[str(i)]["epoch"] = epoch
 
         if log_metrics and results:
             eval_log = {
@@ -387,6 +712,7 @@ class ProtonetTrainer:
                 "epoch": epoch,
             }
             wandb.log(eval_log)
+            # wandb.log(task_results)
 
             logger.info(
                 f"Evaluation after epoch {epoch} for {score_name_prefix}: Loss = {results['loss']:.2f}"
@@ -399,8 +725,9 @@ class ProtonetTrainer:
                 + f"ROC-AUC = {results['roc_auc']:.2f}"
             )
         self.protonet.train()
-        if hasattr(dataloader.dataset, "training"):
-            dataloader.dataset.training = dataloader_original_training_state
-        if hasattr(dataloader.batch_sampler, "use_all_remaining"):
-            dataloader.batch_sampler.use_all_remaining = dataloader_original_use_all_remaining_state
+        if isinstance(dataloader, DataLoader):
+            if hasattr(dataloader.batch_sampler, "training"):
+                dataloader.batch_sampler.training = dataloader_original_training_state
+            if hasattr(dataloader.batch_sampler, "use_all_remaining"):
+                dataloader.batch_sampler.use_all_remaining = dataloader_original_use_all_remaining_state
         return results

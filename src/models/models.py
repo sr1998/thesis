@@ -11,6 +11,7 @@ class HighlyFlexibleModel(nn.Module):
         layer_norm: bool = True,
         batch_norm: bool = False,
         activation: str = "relu",
+        make_output_binary: bool = True,
     ):
         super().__init__()
 
@@ -22,7 +23,7 @@ class HighlyFlexibleModel(nn.Module):
             layer_sizes = layer_sizes + [256] * (num_layers - len(layer_sizes))
 
         # Select activation function
-        if activation == "relu":
+        if activation == "relu" or activation == 1:
             self.act_fn = nn.ReLU()
         elif activation == "leaky_relu":
             self.act_fn = nn.LeakyReLU()
@@ -32,6 +33,8 @@ class HighlyFlexibleModel(nn.Module):
             self.act_fn = nn.GELU()
         elif activation == "selu":
             self.act_fn = nn.SELU()
+        elif activation == "none" or activation is None or activation == 0:
+            self.act_fn = nn.Identity()
         else:
             self.act_fn = nn.ReLU()  # Default
 
@@ -58,7 +61,8 @@ class HighlyFlexibleModel(nn.Module):
             in_features = out_features
 
         # Output layer (binary classification)
-        layers.append(nn.Linear(in_features, 1))
+        if make_output_binary:
+            layers.append(nn.Linear(in_features, 1))
 
         self.model = nn.Sequential(*layers)
 
