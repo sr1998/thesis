@@ -77,7 +77,7 @@ def centered_log_ratio(df: pd.DataFrame, replace_zero_with: float) -> pd.DataFra
     return df
 
 
-def pandas_label_encoder(df: pd.DataFrame) -> pd.DataFrame:
+def pandas_label_encoder(df: pd.DataFrame, positive_class_label: str = None) -> pd.DataFrame:
     """Encode the labels of a dataframe. All columns of type "object" are encoded.
 
     Args:
@@ -92,6 +92,17 @@ def pandas_label_encoder(df: pd.DataFrame) -> pd.DataFrame:
     le = LabelEncoder()
     for col in df.columns:
         if df[col].dtype == "object":
-            df[col] = le.fit_transform(df[col])
+            le = le.fit(df[col])
+            classes = list(le.classes_)
+            if positive_class_label in classes:
+                positive_class_index = classes.index(positive_class_label)
+                if positive_class_index != 1:
+                    # Swap labels to ensure the desired class is labeled as 1
+                    classes[1], classes[positive_class_index] = (
+                        classes[positive_class_index],
+                        classes[1],
+                    )
+                    le.classes_ = np.array(classes)
+            df[col] = le.transform(df[col])
 
     return df
