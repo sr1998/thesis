@@ -476,7 +476,7 @@ class ProtonetTrainer:
         save_best_model_path: str = None,
         track_best_f1: bool = True,
         load_best_model: bool = False,
-        # accumulation_steps: int = 5,
+        accumulation_steps: int = 50,
         **kwargs,  # to sbe ignored
     ):
         self.protonet.train()
@@ -505,7 +505,7 @@ class ProtonetTrainer:
                 )
 
             # Validation phase
-            if eval_dataloader and (early_stopping_patience or track_best_f1):
+            if eval_dataloader and track_best_f1:
                 val_result = self.evaluate(
                     eval_dataloader,
                     f"{score_name_prefix}{val_or_test}",
@@ -520,18 +520,18 @@ class ProtonetTrainer:
                     best_f1_epoch = epoch
 
                     # Save model state with best F1
-                    if save_best_model_path:
-                        best_model_state = {
-                            "state_dict": self.protonet.state_dict(),
-                            "epoch": epoch,
-                            "f1_score": best_f1,
-                        }
-                        torch_save(
-                            best_model_state, str(save_best_model_path) + ".best_f1"
-                        )
-                        logger.info(
-                            f"Saved new best F1 model with F1 = {best_f1:.4f} at epoch {epoch+1}"
-                        )
+                    # if save_best_model_path:
+                    #     best_model_state = {
+                    #         "state_dict": self.protonet.state_dict(),
+                    #         "epoch": epoch,
+                    #         "f1_score": best_f1,
+                    #     }
+                    #     torch_save(
+                    #         best_model_state, str(save_best_model_path) + ".best_f1"
+                    #     )
+                    #     logger.info(
+                    #         f"Saved new best F1 model with F1 = {best_f1:.4f} at epoch {epoch+1}"
+                    #     )
 
             self.current_epoch = epoch
             es_batches = []
@@ -562,11 +562,11 @@ class ProtonetTrainer:
                     patience_counter = 0
 
                     # Save the best model
-                    if save_best_model_path:
-                        torch_save(self, save_best_model_path)
-                        logger.info(
-                            f"Saved new best model with {early_stopping_metric} = {current_metric:.4f}"
-                        )
+                    # if save_best_model_path:
+                    #     torch_save(self, save_best_model_path)
+                    #     logger.info(
+                    #         f"Saved new best model with {early_stopping_metric} = {current_metric:.4f}"
+                    #     )
                 else:
                     patience_counter += 1
 
@@ -575,7 +575,7 @@ class ProtonetTrainer:
                     break
 
             self.optimizer.zero_grad()
-
+            i = 0
             for X, y in train_iter:
                 X, y = X.to(self.device), y.to(self.device, dtype=torch.int64)
                 X_support = X[: self.train_k_shot * 2, :]
@@ -593,15 +593,15 @@ class ProtonetTrainer:
                 loss.backward()
                 self.optimizer.step()
 
-                # if i == 0:
-                #     print(f"starting new epoch {epoch}")
+                # i += 1
                 # if (i + 1) % accumulation_steps == 0 or i == len(train_dataloader) - 1:
-                #     # Perform optimization step with accumulated gradients
-                #     self.optimizer.step()
                 #     # Log gradients if enabled
                 #     if log_gradients:
                 #         self._log_gradients(epoch, f"{score_name_prefix}train")
                     
+                #     # Perform optimization step with accumulated gradients
+                #     self.optimizer.step()
+
                 #     # Reset gradients for next accumulation
                 #     self.optimizer.zero_grad()
                     
@@ -647,19 +647,19 @@ class ProtonetTrainer:
                 )
 
         # Load best F1 model if requested (for future use)
-        if (
-            track_best_f1
-            and best_model_state
-            and save_best_model_path
-            and load_best_model
-        ):
-            best_model_checkpoint = torch_load(str(save_best_model_path) + ".best_f1")
-            self.protonet.load_state_dict(best_model_checkpoint["state_dict"])
-            self.current_epoch = best_model_checkpoint["epoch"]
-            best_f1 = best_model_checkpoint["f1_score"]
-            logger.info(
-                f"Loaded best F1 model with F1 = {best_f1:.4f} from epoch {best_f1_epoch+1}"
-            )
+        # if (
+        #     track_best_f1
+        #     and best_model_state
+        #     and save_best_model_path
+        #     and load_best_model
+        # ):
+        #     best_model_checkpoint = torch_load(str(save_best_model_path) + ".best_f1")
+        #     self.protonet.load_state_dict(best_model_checkpoint["state_dict"])
+        #     self.current_epoch = best_model_checkpoint["epoch"]
+        #     best_f1 = best_model_checkpoint["f1_score"]
+        #     logger.info(
+        #         f"Loaded best F1 model with F1 = {best_f1:.4f} from epoch {best_f1_epoch+1}"
+        #     )
 
         val_result["averaged_f1_score"] = sum(all_f1_scores[-10:]) / 10
         return train_results, val_result

@@ -67,14 +67,16 @@ def main(
     # early_stop_patience: int = None,
     # early_stop_metric: str = "loss",
     resume: bool = True,
-    track_best_f1: bool = True,
+    track_best_f1: bool = False,
     positive_class_label: str | None = None,
-    jitter_fraction: float = 0.0,
     feature_reduction_alg: str = None,
+    project: str = None,
     random_seed: int = RANDOM_SEED,
-    extra_str_indicator: str = ""
+    extra_str_indicator: str = "",
+    new_primary: bool = False,
 ):
     set_seed(random_seed)
+    project = project or "metalearning"
     
     config_script = "run_configs.metalearning"
     config_module = import_module(config_script)
@@ -116,23 +118,36 @@ def main(
                 train_metadata = train_metadata.loc[:, features_to_use]
 
 
-            test_data = pd.read_csv(
+            orig_data = pd.read_csv(
                 f"{data_root_dir}/mpa4_species_profile_preprocessed.csv",
                 index_col=0,
                 header=0,
             )
 
-            test_metadata = pd.read_csv(
+            orig_metadata = pd.read_csv(
                 f"{data_root_dir}/sample_group_species_preprocessed.csv",
                 index_col=0,
                 header=0,
             )
-            test_metadata = test_metadata.loc[test_data.index, :]
-            grouped = test_metadata.groupby("Project_1")
+            orig_metadata = orig_metadata.loc[orig_data.index, :]
+            grouped = orig_metadata.groupby("Project_1")
+            test_data = pd.DataFrame()
+            test_metadata = pd.DataFrame()
+
+            # extra_train_data = pd.DataFrame()
+            # extra_train_metadata = pd.DataFrame()
             for group, idx in grouped.groups.items():
                 if group == test_study:
-                    test_metadata = test_metadata.loc[idx, :]
-                    test_data = test_data.loc[idx, :]
+                    test_metadata = pd.concat([test_metadata, orig_metadata.loc[idx, :]])
+                    test_data = pd.concat([test_data, orig_data.loc[idx, :]])
+                # else:
+                #     extra_train_data = pd.concat([extra_train_data, orig_data.loc[idx, :]])
+                #     extra_train_metadata = pd.concat([extra_train_metadata, orig_metadata.loc[idx, :]])
+
+            # print(str(train_metadata["Project_1"].unique()))
+            # train_data = pd.concat([train_data, extra_train_data])
+            # train_metadata = pd.concat([train_metadata, extra_train_metadata])
+            # print(str(train_metadata["Project_1"].unique()))
 
             sun_et_al_abundance = pd.concat([train_data, test_data])
             sun_et_al_metadata = pd.concat([train_metadata, test_metadata])
@@ -198,7 +213,7 @@ def main(
     wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_{extra_str_indicator}"
     # Set up checkpoint path and load checkpoint if resuming
     resume_dir = get_resume_dir_for_experiment(
-        "metalearning", algorithm, test_study, wandb_name
+        project, algorithm, test_study, wandb_name
     )
     checkpoint_path = str(resume_dir / "checkpoint.yaml")
     checkpoint = load_checkpoint(checkpoint_path, resume)
@@ -242,7 +257,6 @@ def main(
         "positive_class_label": positive_class_label,
         "random_seed": random_seed,
         "extra_str_indicator": extra_str_indicator,
-        "jitter_fraction": jitter_fraction,
         "feature_reduction_alg": feature_reduction_alg,
         "job_id": job_id,
         "array_job_id": array_job_id,
@@ -268,7 +282,7 @@ def main(
                     wandb_name += f"_multi{len(config['job_history'])}"
 
         wandb.init(
-            project="metalearning",
+            project=project,
             name=wandb_name,
             config=config,
             notes=str(config),
@@ -283,7 +297,7 @@ def main(
             mode="disabled",
             config=config,
             notes=str(config),
-            project="metalearning",
+            project=project,
             group=algorithm,
             tags=wandb_base_tags,
         )
@@ -291,7 +305,7 @@ def main(
     logger.success("wandb init done")
 
     run_dir = get_run_dir_for_experiment(
-        "metalearning", algorithm, test_study, wandb.run.id
+        project, algorithm, test_study, wandb.run.id
     )
 
     # Store wandb run ID in checkpoint
@@ -304,11 +318,12 @@ def main(
         job_identifier += f"_{array_task_id}"
 
     # If first job, set as primary
-    if not checkpoint.get("primary_job_id"):
+    if not checkpoint.get("primary_job_id") or new_primary:
         checkpoint["primary_job_id"] = job_identifier
     else:
         if tuning_num_samples > 0 and sum([t for t in checkpoint["trials_done_per_job"].values()]) >= tuning_num_samples:
             checkpoint["primary_job_id"] = job_identifier
+            checkpoint["optimization_done"] = True
 
     save_checkpoint(checkpoint_path, checkpoint)
 
@@ -331,7 +346,7 @@ def main(
             study_name=f"hyper-param_optimization_for_{checkpoint['wandb_run_id']}",
             storage=storage,
             load_if_exists=True,
-            sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED),
+            sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED, multivariate=True),
         )
 
         is_primary = job_identifier == checkpoint["primary_job_id"]

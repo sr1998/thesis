@@ -54,16 +54,17 @@ def get_metalearning_model_from_trial(
         #     columns=test_data.columns,
         # )
 
-    if feature_reduction_n_components != 0 and (feature_reduction_alg is not None or feature_reduction_alg):
+    train_data = train_data * scale_factor_before_training
+    eval_data = eval_data * scale_factor_before_training
+
+    if feature_reduction_n_components != 0 and feature_reduction_alg:
         logger.info(f"Doing {feature_reduction_alg}")
-        train_data = train_data * scale_factor_before_training
         if feature_reduction_alg == "PCA":
             feature_reduction = PCA(n_components=feature_reduction_n_components)
         elif feature_reduction_alg == "ICA":
             feature_reduction = FastICA(n_components=feature_reduction_n_components)
         feature_reduction = feature_reduction.fit(train_data)
         train_data = pd.DataFrame(feature_reduction.transform(train_data), index=train_data.index)
-        eval_data = eval_data * scale_factor_before_training
         eval_data = pd.DataFrame(feature_reduction.transform(eval_data), index=eval_data.index)
 
     train_metadata = column_rename_for_sun_et_al_metadata(train_metadata)
@@ -107,7 +108,7 @@ def get_metalearning_model_from_trial(
     elif extra_configs["splitting_method"] == "study_wise":
         n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
         # Create Datasets for DataLoader
-        train = MicrobiomeDataset(train_data, train_metadata, jitter_fraction=extra_configs["jitter_fraction"], target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"]))
+        train = MicrobiomeDataset(train_data, train_metadata, jitter_fraction=trial_config["jitter_fraction"], target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"]))
         eval = MicrobiomeDataset(
             eval_data, eval_metadata, preselected_support_set=eval_support_sets, jitter_fraction=0.0, target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"])
         )
@@ -127,7 +128,7 @@ def get_metalearning_model_from_trial(
             include_query=True,
             shuffle=False,
             shuffle_once=False,
-            training=False,
+            training=False
         )
         eval_loader = DataLoader(eval, batch_sampler=sampler, num_workers=n_cpus, pin_memory=True)
     else:

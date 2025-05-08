@@ -24,7 +24,7 @@ class MicrobiomeDataset(Dataset):
         transform=None,
         target_transform=None,
         preselected_support_set: list[str] = None,  # only for val and test#TODO test thoroughly
-        jitter_fraction: float = 0.2,       # 10 % of within‑study σ  (tune as you like)
+        jitter_fraction: float = 0.0,       # 10 % of within‑study σ  (tune as you like)
     ):
         """Constructor for the MicrobiomeDataset class.
 
