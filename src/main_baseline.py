@@ -35,9 +35,9 @@ def main(
     config_script: str,
     algorithm: str | None = None,
     *,
-    abundance_file: str | Path,  # for sun et al. data for now
-    metadata_file: str | Path,  # for sun et al. data for now
     balanced_or_unbalanced: str,
+    abundance_file: str | Path=None,  # for sun et al. data for now
+    metadata_file: str | Path=None,  # for sun et al. data for now
     study: str | list[str] | None = None,
     summary_type: str | None = None,
     pipeline_version: str | None = None,
@@ -112,7 +112,7 @@ def main(
     setup["abundance_file"] = abundance_file
     setup["metadata_file"] = metadata_file
     setup["balanced_or_unbalanced"] = balanced_or_unbalanced
-    tax_level = abundance_file.split("_")[1]
+    tax_level = abundance_file.split("_")[1] if abundance_file else "None"
     setup["tax_level"] = tax_level
     setup["model"] = standard_pipeline.named_steps["model"].__class__.__name__
     setup["device"] = standard_pipeline.named_steps["model"].device if algorithm == "NeuralNet" else "cpu"
@@ -243,7 +243,7 @@ def main(
             **inner_cv_config["params"], random_state=random_state
         )
 
-        if tuning_num_samples > 0:
+        if tuning_num_samples > 0 and search_space_sampler is not None:
             optuna_study = optuna.create_study(
                 direction=tuning_mode, study_name=f"outer_cv_{i}_for_{wandb.run.name}"
                 sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED, multivariate=True),
