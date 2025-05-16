@@ -5,6 +5,7 @@ from imblearn.over_sampling import SMOTE
 from loguru import logger
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.calibration import LabelEncoder
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     average_precision_score,
@@ -38,12 +39,12 @@ def get_setup(model_name, with_oversampling=True):
     tuning_num_samples = 50
 
     outer_cv_config = {
-        "type": StratifiedShuffleSplit,
+        "type": ShuffleSplit,
         "params": {"n_splits": n_outer_splits, "test_size": 0.2, "random_state": 42},
     }
 
     inner_cv_config = {
-        "type": StratifiedShuffleSplit,
+        "type": ShuffleSplit,
         "params": {
             "n_splits": n_inner_splits,
             "test_size": 0.2,
@@ -77,6 +78,7 @@ def get_setup(model_name, with_oversampling=True):
         "NeuralNet": NeuralNetWrapper(),
         "BalancedRandomForestClassifier": BalancedRandomForestClassifier(n_jobs=n_cpus),
         "TabPFN": TabPFNClassifier(memory_saving_mode=False, n_jobs=n_cpus, ignore_pretraining_limits=True),
+        "Dummy": DummyClassifier(strategy="constant", constant=1),
     }[model_name]
 
     standard_pipeline = create_pipeline(
@@ -122,6 +124,7 @@ def get_setup(model_name, with_oversampling=True):
         "RandomForestClassifier": partial(sss.rf_search_space_sampler, best_fit_scorer=best_fit_scorer),
         "XGBoost": sss.xgboost_search_space_sampler,
         "BalancedRandomForestClassifier": partial(sss.rf_search_space_sampler, best_fit_scorer=best_fit_scorer),
+        "Dummy": None,
     }[model_name]
 
     return {

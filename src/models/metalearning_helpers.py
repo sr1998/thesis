@@ -13,6 +13,7 @@ from src.data.helper_functions import select_features_by_pc_loadings
 from src.preprocessing.functions import pandas_label_encoder
 from torch.utils.data import DataLoader
 import torch
+import torch.multiprocessing as mp
 
 import wandb
 from src.data.sun_et_al import BinaryFewShotBatchSampler, KShotBatchSampler, LabelOnlyDataset, MicrobiomeDataset

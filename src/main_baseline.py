@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, Tenso
 
 from joblib import dump as joblib_dump
 from src.data.dataloader import get_mgnify_data, get_sun_et_al_study_data
+from src.global_vars import RANDOM_SEED
 from src.scoring.metalearning_scoring_fn import compute_metrics
 
 sys.path.append(".")
@@ -245,7 +246,7 @@ def main(
 
         if tuning_num_samples > 0 and search_space_sampler is not None:
             optuna_study = optuna.create_study(
-                direction=tuning_mode, study_name=f"outer_cv_{i}_for_{wandb.run.name}"
+                direction=tuning_mode, study_name=f"outer_cv_{i}_for_{wandb.run.name}",
                 sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED, multivariate=True),
             )
             optuna_study.optimize(
