@@ -73,6 +73,7 @@ def main(
     project: str = None,
     random_seed: int = RANDOM_SEED,
     extra_str_indicator: str = "",
+    wait_for_warmup: bool = False,
     new_primary: bool = False,
 ):
     set_seed(random_seed)
@@ -360,6 +361,8 @@ def main(
         trials_to_do = trials_to_do - checkpoint["trials_done_per_job"].get(
             job_identifier, 0
         )
+        trials_to_do = trials_to_do - sum([t for t in checkpoint["trials_done_per_job"].values()])
+        logger.info(f"trials_to_do: {trials_to_do}")
 
         if trials_to_do > 0 and not checkpoint["optimization_done"]:
             # Primary job handles warmup phase
@@ -409,6 +412,8 @@ def main(
                 while (
                     not checkpoint.get("warmup_completed", False) and waited < max_wait
                 ):
+                    if not wait_for_warmup:
+                        raise TimeoutError("Warmup phase happening.")
                     logger.info(
                         f"Helper job waiting for warmup to complete... ({waited}s)"
                     )
@@ -520,7 +525,7 @@ def main(
         try:
             # Train the best model
             best_trial_config = search_space_sampler(best_trial)
-            best_model, train_loader, test_loader = get_metalearning_model_from_trial(
+            best_model, train_loader, val_loader, test_loader = get_metalearning_model_from_trial(
                 train_data,
                 test_data,
                 train_metadata,
@@ -544,6 +549,7 @@ def main(
                 train_dataloader=train_loader,
                 n_epochs=n_epochs,
                 n_parallel_tasks=n_parallel_tasks,
+                val_loader=val_loader,
                 eval_dataloader=test_loader,
                 val_or_test="test",
                 log_metrics=True,

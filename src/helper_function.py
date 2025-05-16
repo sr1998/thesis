@@ -5,6 +5,7 @@ import random
 import time
 from typing import Iterable
 
+from src.data.helper_functions import select_features_by_pc_loadings
 import torch
 import filelock
 import numpy as np
@@ -225,13 +226,8 @@ def circular_slice(arr: Iterable, start: int, end: int) -> Iterable:
     return arr[indices]  # Direct NumPy indexing
 
 
-def get_pipeline(what, standard_pipeline, search_space_sampler, optuna_trial):
+def get_pipeline(what, standard_pipeline, trial_config):
     """Get the pipeline with the hyperparameters sampled from the search space."""
-    if search_space_sampler is not None:
-        trial_config = search_space_sampler(optuna_trial)
-    else:
-        trial_config = {}
-
     if what == "mgnify":
         n_neighbors = trial_config["preprocessor__feature_space_change__n_neighbors"]
         preprocessor__feature_space_change = SelectPercentile(
@@ -277,7 +273,8 @@ def hyp_param_eval_with_cv(
     trial: optuna.Trial,
 ):
     """Evaluate the hyperparameters with cross-validation for a given dataset and pipeline with the given search space sampler."""
-    pipeline = get_pipeline(what, standard_pipeline, search_space_sampler, trial)
+    trial_config = search_space_sampler(trial)
+    pipeline = get_pipeline(what, standard_pipeline, trial_config)
 
     cross_val_results = cross_validate(
         pipeline,
@@ -370,12 +367,17 @@ def hyp_param_eval_for_baseline_metalearning(
     best_fit_scorer,
     search_space_sampler,
     trial,
+    setup,
 ):
     """Evaluate the hyperparameters with cross-validation for a given dataset and pipeline with the given search space sampler.
 
     This function is used for the baseline meta-learning approach where the evaluation data is used as the support set for the validation data.
     """
-    pipeline = get_pipeline(datasource, standard_pipeline, search_space_sampler, trial)
+    if search_space_sampler is None:
+        trial_config = {}
+    else:
+        trial_config = search_space_sampler(trial)
+    pipeline = get_pipeline(datasource, standard_pipeline, trial_config)
 
     # Evaluate the pipeline with the inner cross-validation
     train_scores = []
@@ -389,7 +391,6 @@ def hyp_param_eval_for_baseline_metalearning(
         train_metadata = orig_train_metadata.drop(val_metadata.index)
         # Make sure the metadata is in the same order as the data
         train_metadata = train_metadata.loc[train_data.index]
-
         (
             train_data,
             train_metadata,
@@ -402,6 +403,24 @@ def hyp_param_eval_for_baseline_metalearning(
             val_metadata,
             val_support_sets,
         )
+
+        if "tabpfn" in standard_pipeline.named_steps["model"].__class__.__name__.lower():
+            feature_reduction_n_components = 500
+        else:
+            feature_reduction_n_components = trial_config.get("feature_reduction_n_components", 0)
+        feature_reduction_alg = setup["feature_reduction_alg"]
+        if feature_reduction_n_components != 0:
+            if feature_reduction_alg == "PCA":
+                feature_reduction = PCA(n_components=feature_reduction_n_components)
+                feature_reduction = feature_reduction.fit(train_data)
+                train_data = pd.DataFrame(feature_reduction.transform(train_data), index=train_data.index)
+                val_data = pd.DataFrame(feature_reduction.transform(val_data), index=val_data.index)
+            elif feature_reduction_alg == "PCA_feat_sel":
+                selected_feats, _, _ = select_features_by_pc_loadings(train_data, n_features=feature_reduction_n_components, n_components=500)
+                train_data = train_data[selected_feats]
+                val_data = val_data[selected_feats]
+            else:
+                raise ValueError(f"Unknown feature reduction algorithm: {feature_reduction_alg}")
 
         if balanced_or_unbalanced == "balanced":
             # We give metadata but get labels back

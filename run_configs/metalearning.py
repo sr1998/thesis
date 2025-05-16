@@ -8,11 +8,11 @@ def get_setup(algorithm: str):
     }[algorithm]
     
     n_outer_splits = 10
-    n_inner_splits = 3
+    n_inner_splits = 5
     tuning_mode = "maximize"
     best_fit_scorer = "f1"
-    n_parallel_jobs = 5
-    tuning_num_samples_helper = 20
+    n_parallel_jobs = 1
+    tuning_num_samples_helper = 25
     tuning_num_samples_primary = tuning_num_samples_helper + 5 # 5 is needed for warmp-up
     tuning_num_samples = tuning_num_samples_helper * n_parallel_jobs + 5
 

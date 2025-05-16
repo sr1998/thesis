@@ -9,12 +9,14 @@ from loguru import logger
 from sklearn.calibration import LabelEncoder
 from sklearn.preprocessing import Normalizer
 from sklearn.decomposition import FastICA, PCA
+from src.data.helper_functions import select_features_by_pc_loadings
 from src.preprocessing.functions import pandas_label_encoder
 from torch.utils.data import DataLoader
+import torch
 
 import wandb
 from src.data.sun_et_al import BinaryFewShotBatchSampler, KShotBatchSampler, LabelOnlyDataset, MicrobiomeDataset
-from src.helper_function import column_rename_for_sun_et_al_metadata, df_str_for_loguru, encode_labels
+from src.helper_function import column_rename_for_sun_et_al_metadata, df_str_for_loguru, encode_labels, make_data_balanced_per_study
 from src.models import maml_with_l2l, protonet, reptile_with_l2l
 from src.models.models import HighlyFlexibleModel
 
@@ -30,11 +32,29 @@ def get_metalearning_model_from_trial(
     algorithm: str,
     trial_config: dict[str, object],
     extra_configs: dict[str, object],
-) -> tuple[maml_with_l2l.MAML, DataLoader, DataLoader]:
+) -> tuple[maml_with_l2l.MAML, DataLoader, DataLoader, DataLoader]:
     do_normalization_before_scaling = trial_config["do_normalization_before_scaling"]
     scale_factor_before_training = trial_config["scale_factor_before_training"]
     feature_reduction_alg = extra_configs["feature_reduction_alg"]
     feature_reduction_n_components = trial_config["feature_reduction_n_components"]
+    n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
+    balanced_or_unbalanced = extra_configs["balanced_or_unbalanced"]
+
+    if mp.get_start_method(allow_none=True) is None:
+        mp.set_start_method('spawn', force=True)  # Most compatible option
+
+    if feature_reduction_n_components != 0:
+            if feature_reduction_alg == "PCA":
+                feature_reduction = PCA(n_components=feature_reduction_n_components)
+                feature_reduction = feature_reduction.fit(train_data)
+                train_data = pd.DataFrame(feature_reduction.transform(train_data), index=train_data.index)
+                eval_data = pd.DataFrame(feature_reduction.transform(eval_data), index=eval_data.index)
+            elif feature_reduction_alg == "PCA_feat_sel":
+                selected_feats, _, _ = select_features_by_pc_loadings(train_data, n_features=feature_reduction_n_components, n_components=500)
+                train_data = train_data[selected_feats]
+                eval_data = eval_data[selected_feats]
+            else:
+                raise ValueError(f"Unknown feature reduction algorithm: {feature_reduction_alg}")
 
     # normalize the data
     if do_normalization_before_scaling:
@@ -57,18 +77,37 @@ def get_metalearning_model_from_trial(
     train_data = train_data * scale_factor_before_training
     eval_data = eval_data * scale_factor_before_training
 
-    if feature_reduction_n_components != 0 and feature_reduction_alg:
-        logger.info(f"Doing {feature_reduction_alg}")
-        if feature_reduction_alg == "PCA":
-            feature_reduction = PCA(n_components=feature_reduction_n_components)
-        elif feature_reduction_alg == "ICA":
-            feature_reduction = FastICA(n_components=feature_reduction_n_components)
-        feature_reduction = feature_reduction.fit(train_data)
-        train_data = pd.DataFrame(feature_reduction.transform(train_data), index=train_data.index)
-        eval_data = pd.DataFrame(feature_reduction.transform(eval_data), index=eval_data.index)
-
     train_metadata = column_rename_for_sun_et_al_metadata(train_metadata)
     eval_metadata = column_rename_for_sun_et_al_metadata(eval_metadata)
+
+    # if trial_config["early_stopping_patience"]:
+    #     frac = trial_config["early_stopping_fraction"]
+    #     label_wise_indices = train_metadata.groupby("label", sort=False).apply(
+    #         lambda x: x.sample(frac=frac, random_state=extra_configs["random_seed"])
+    #     )
+        
+    #     label_wise_indices = label_wise_indices.index.get_level_values(1).tolist()
+    #     val_data = train_data.loc[label_wise_indices]
+    #     val_metadata = train_metadata.loc[label_wise_indices]
+    #     train_data = train_data.drop(index=label_wise_indices)
+    #     train_metadata = train_metadata.drop(index=label_wise_indices)
+
+    #     val_metadata = val_metadata.loc[val_data.index]
+
+    #     val_labels = encode_labels(LabelEncoder(), val_metadata["label"], extra_configs["positive_class_label"])
+    #     val_dataset = LabelOnlyDataset(val_data.values, val_labels.values)
+    #     val_sampler = KShotBatchSampler(val_dataset, train_k_shot, include_query=True, query_size="rest", shuffle=False)
+    #     val_loader = DataLoader(
+    #         val_dataset,
+    #         batch_sampler=val_sampler,
+    #         num_workers=n_cpus,
+    #         pin_memory=torch.cuda.is_available(),
+    #         persistent_workers=torch.cuda.is_available(),
+    #     )
+    # else: 
+    #     val_data = pd.DataFrame(columns=train_data.columns)
+    #     val_metadata = pd.DataFrame(columns=train_metadata.columns)
+    #     val_loader = None
 
     # # For testing: make limited data for testing of only 3 Groups
     # grouped = train_metadata.groupby("project")
@@ -96,17 +135,18 @@ def get_metalearning_model_from_trial(
         train_loader = DataLoader(
             train_dataset,
             batch_sampler=train_sampler,
-            num_workers=0,
-            pin_memory=True,
+            num_workers=n_cpus,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=torch.cuda.is_available(),
         )
         eval_loader = DataLoader(
             eval_dataset,
             batch_sampler=eval_sampler,
-            num_workers=0,
-            pin_memory=True,
+            num_workers=n_cpus,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=torch.cuda.is_available(),
         )
     elif extra_configs["splitting_method"] == "study_wise":
-        n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
         # Create Datasets for DataLoader
         train = MicrobiomeDataset(train_data, train_metadata, jitter_fraction=trial_config["jitter_fraction"], target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"]))
         eval = MicrobiomeDataset(
@@ -120,7 +160,7 @@ def get_metalearning_model_from_trial(
             include_query=True if algorithm != "Reptile" else False,
             shuffle=True,
         )
-        train_loader = DataLoader(train, batch_sampler=sampler, num_workers=n_cpus, pin_memory=True)
+        train_loader = DataLoader(train, batch_sampler=sampler, num_workers=n_cpus, pin_memory=torch.cuda.is_available())
 
         sampler = BinaryFewShotBatchSampler(
             eval,
@@ -130,12 +170,11 @@ def get_metalearning_model_from_trial(
             shuffle_once=False,
             training=False
         )
-        eval_loader = DataLoader(eval, batch_sampler=sampler, num_workers=n_cpus, pin_memory=True)
+        eval_loader = DataLoader(eval, batch_sampler=sampler, num_workers=n_cpus, pin_memory=torch.cuda.is_available())
     else:
         raise ValueError(
             f"Unknown splitting method: {extra_configs['splitting_method']}"
         )
-
 
     # Get model
     n_input_features = train_data.shape[1]
@@ -213,7 +252,7 @@ def get_metalearning_model_from_trial(
     else:
         raise ValueError(f"Unknown algorithm: {algorithm}")
 
-    return model, train_loader, eval_loader
+    return model, train_loader, None, eval_loader
 
 
 def hyp_param_val_for_metalearning(
@@ -245,7 +284,7 @@ def hyp_param_val_for_metalearning(
         trial_config = search_space_sampler(trial)
 
         logger.info("Setting up model and dataloaders from trial")
-        model, train_loader, val_loader = get_metalearning_model_from_trial(
+        model, train_loader, val_loader, eval_loader = get_metalearning_model_from_trial(
             train_data,
             val_data,
             train_metadata,
@@ -263,7 +302,8 @@ def hyp_param_val_for_metalearning(
             train_dataloader=train_loader,
             n_epochs=trial_config["max_epochs"],
             n_parallel_tasks=extra_configs["n_parallel_tasks"],
-            eval_dataloader=val_loader,
+            val_dataloader=val_loader,
+            eval_dataloader=eval_loader,
             early_stopping_patience=trial_config["early_stopping_patience"],
             early_stopping_fraction=trial_config["early_stopping_fraction"],
             # early_stopping_metric=early_stop_metric,

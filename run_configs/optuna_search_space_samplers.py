@@ -4,6 +4,9 @@ def xgboost_search_space_sampler(optuna_trial):
     model__max_depth = optuna_trial.suggest_int("model__max_depth", 3, 8)
     model__reg_lambda = optuna_trial.suggest_float("model__reg_lambda", 0.0, 1.0)
     model__reg_alpha = optuna_trial.suggest_float("model__reg_alpha", 0.0, 1.0)
+    # feature_reduction_n_components = optuna_trial.suggest_int(
+    #     "feature_reduction_n_components", 0, 1500, step=100
+    # )
 
     return {
         "model__learning_rate": model__learning_rate,
@@ -11,6 +14,7 @@ def xgboost_search_space_sampler(optuna_trial):
         "model__max_depth": model__max_depth,
         "model__reg_lambda": model__reg_lambda,
         "model__reg_alpha": model__reg_alpha,
+        "feature_reduction_n_components": 0,
     }
 
 
@@ -32,6 +36,10 @@ def rf_search_space_sampler(optuna_trial, best_fit_scorer):
         "model__oob_score", [False, best_fit_scorer]
     )
 
+    # feature_reduction_n_components = optuna_trial.suggest_int(
+    #     "feature_reduction_n_components", 0, 1500, step=100
+    # )
+
     return {
         # "preprocessor__feature_space_change__percentile": preprocessor__feature_space_change__percentile,
         # "preprocessor__feature_space_change__n_neighbors": preprocessor__feature_space_change__n_neighbors,
@@ -41,6 +49,7 @@ def rf_search_space_sampler(optuna_trial, best_fit_scorer):
         "model__class_weight": model__class_weight,
         "model__bootstrap": model__bootstrap,
         "model__oob_score": model__oob_score,
+        "feature_reduction_n_components": 0,
     }
 
 
@@ -107,6 +116,10 @@ def nn_search_space_sampler(optuna_trial):
         )
         model__layer_sizes.append(layer_size)
 
+    feature_reduction_n_components = optuna_trial.suggest_int(
+        "feature_reduction_n_components", 0, 1500, step=100
+    )
+
     return {
         "model__n_epochs": 100,
         "model__batch_size": model__batch_size,
@@ -119,6 +132,7 @@ def nn_search_space_sampler(optuna_trial):
         "model__layer_norm": model__layer_norm,
         "model__batch_norm": model__batch_norm,
         "model__activation": "relu",
+        "feature_reduction_n_components": feature_reduction_n_components,
     }
 
 
@@ -243,43 +257,45 @@ def reptile_search_space_sampler(optuna_trial):
 
 
 PROTONET_INTIAL_TRIAL_FOR_OPTUNA = {
-    "model__starting_lr": 7.6267e-05,
+    "model__starting_lr": 5e-4,
     "model__scheduler_gamma": 0.7,
+    "model__weight_decay": 0.0,
     "model__num_layers": 4,
-    "model__layer_0_size": 241,
-    "model__layer_1_size": 241,
-    "model__layer_2_size": 211,
-    "model__layer_3_size": 241,
-    "model__dropout_rate": 0.20665665125665642,
-    "model__activation": "relu",
-    "feature_reduction_n_components": 0,
+    "model__layer_0_size": 240,
+    "model__layer_1_size": 240,
+    "model__layer_2_size": 180,
+    "model__layer_3_size": 180,
+    # "model__dropout_rate": 0.4,
+    # "model__activation": "relu",
+    # "feature_reduction_n_components": 0,
     "early_stopping_patience": 10,
-    "early_stopping_fraction": 0.2,
+    # "early_stopping_fraction": 0.2,
+    "jitter_fraction": 0.0,
 }
 
 def protonet_search_space_sampler(optuna_trial):
     if optuna_trial is None:
         return {
-            "model__starting_lr": 8e-05,
-            "model__scheduler_step": 30,
-            "model__scheduler_gamma": 0.8,
-            "model__weight_decay": 0.0,
+            "model__starting_lr": 1e-04,
+            "model__scheduler_step": 10,
+            "model__scheduler_gamma": 0.7,
+            "model__weight_decay": 0.1,
             "do_normalization_before_scaling": True,
             "scale_factor_before_training": 1e4,
             "model__num_layers": 4,
-            "model__layer_sizes": [211, 31, 31, 31],
-            "model__dropout_rate": 0.213,
+            "model__layer_sizes": [500, 250, 150, 100],
+            "model__dropout_rate": 0.4,
             "model__layer_norm": 0,
             "model__batch_norm": 1,
-            "max_epochs": 500,
+            "max_epochs": 200,
             "model__activation": 'relu',
             "feature_reduction_n_components": 0,
-            "early_stopping_patience": 10,
-            "early_stopping_fraction": 0.2,
+            "early_stopping_patience": 17,
+            "early_stopping_fraction": 0.03,
         }
 
     model__starting_lr = optuna_trial.suggest_float(
-        "model__starting_lr", 5e-6, 5e-4, log=True,
+        "model__starting_lr", 5e-7, 5e-4, log=True,
     )
     model__scheduler_gamma = optuna_trial.suggest_float(
         "model__scheduler_gamma", 0.1, 1.0, step=0.1
@@ -301,13 +317,10 @@ def protonet_search_space_sampler(optuna_trial):
 
     model__layer_sizes = []
     for i in range(model__num_layers):
-        layer_size = optuna_trial.suggest_int(
-            f"model__layer_{i}_size", 1, 241, step=30
-        )
-        model__layer_sizes.append(layer_size) 
+        model__layer_sizes.append(optuna_trial.suggest_int(f"model__layer_{i}_size", 60, 300, step=60))
 
     # Model configuration parameters
-    model__dropout_rate = optuna_trial.suggest_float("model__dropout_rate", 0.0, 0.7)
+    # model__dropout_rate = optuna_trial.suggest_float("model__dropout_rate", 0.0, 0.7)
     # model__layer_norm = optuna_trial.suggest_categorical(
     #     "model__layer_norm", [True, False]
     # )
@@ -320,22 +333,24 @@ def protonet_search_space_sampler(optuna_trial):
 
     # model__activation = optuna_trial.suggest_categorical("model__activation", ["relu", "none"])
 
-    # feature_reduction_n_components = optuna_trial.suggest_int("feature_reduction_n_components", 500, 1500, 100)
+    # feature_reduction_n_components = optuna_trial.suggest_int("feature_reduction_n_components", 300, 1500, step=300)
 
-    early_stopping_patience = optuna_trial.suggest_int("early_stopping_patience", 6, 30, step=2)
+    early_stopping_patience = optuna_trial.suggest_int("early_stopping_patience", 0, 50, step=2)
     # early_stopping_fraction = optuna_trial.suggest_float("early_stopping_fraction", 0.0, 0.4, step=0.1)
+
+    jitter_fraction = optuna_trial.suggest_float("jitter_fraction", 0.0, 0.5, step=0.1)
 
 
     return {
         "model__starting_lr": model__starting_lr,
-        "model__scheduler_step": 30,
+        "model__scheduler_step": 10,
         "model__scheduler_gamma": model__scheduler_gamma,
         "model__weight_decay": model__weight_decay,
         "do_normalization_before_scaling": True,
         "scale_factor_before_training": 1e4,
         "model__num_layers": model__num_layers,
         "model__layer_sizes": model__layer_sizes,
-        "model__dropout_rate": model__dropout_rate,
+        "model__dropout_rate": 0.4,
         "model__layer_norm": False,
         "model__batch_norm": True,
         "max_epochs": 200,
@@ -343,5 +358,6 @@ def protonet_search_space_sampler(optuna_trial):
         "feature_reduction_n_components": 0,
         "early_stopping_patience": early_stopping_patience,
         "early_stopping_fraction": 0.2,
+        "jitter_fraction": jitter_fraction,
     }
 

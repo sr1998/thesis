@@ -465,6 +465,7 @@ class ProtonetTrainer:
         *,
         train_dataloader: DataLoader,
         n_epochs: int,
+        val_dataloader: DataLoader = None,
         eval_dataloader: DataLoader = None,
         val_or_test: str = "val",
         early_stopping_patience: int = None,
@@ -543,7 +544,7 @@ class ProtonetTrainer:
                     es_batches.append((X.clone().detach(), y.clone().detach()))
 
             # Early stopping check
-            if early_stopping_patience:
+            if early_stopping_patience:# and val_dataloader:
                 early_stopping_res = self.evaluate(
                     es_batches, f"{score_name_prefix}_es", epoch, log_metrics=False
                 )
@@ -575,7 +576,7 @@ class ProtonetTrainer:
                     break
 
             self.optimizer.zero_grad()
-            i = 0
+            # train_iter = iter(train_dataloader)
             for X, y in train_iter:
                 X, y = X.to(self.device), y.to(self.device, dtype=torch.int64)
                 X_support = X[: self.train_k_shot * 2, :]
