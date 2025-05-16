@@ -1,5 +1,5 @@
 #!/bin/sh
-#SBATCH --job-name="maml_baseline"
+#SBATCH --job-name="maml_overfitting"
 #SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
 #SBATCH --time=4:00:00            # Request run time (wall-clock). Default is 1 minute
@@ -8,11 +8,11 @@
 #SBATCH --ntasks-per-node=1       # Set one task per node
 #SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
 #SBATCH --mem=4GB                  # Request ... GB of RAM in total
-#SBATCH --gres=gpu:a40:1
+#SBATCH --gres=gpu:1
 #SBATCH --mail-type=FAIL
 
 
-BALANCED_OR_UNBALANCED="unbalanced"
+BALANCED_OR_UNBALANCED="balanced"
 ALGORITHM="MAML"
 STUDIES=(
     'ChenB_2020' 'ChuY_2021' 'HeQ_2017' 'HuY_2019'
@@ -79,6 +79,7 @@ srun apptainer exec \
     --n_parallel_tasks 5 \
     --train_k_shot 10 \
     --positive_class_label "Disease" \
+    --resume False \
 
 # srun apptainer exec \
 #     -B $HOME:$HOME \

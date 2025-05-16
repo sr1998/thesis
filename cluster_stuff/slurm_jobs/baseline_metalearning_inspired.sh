@@ -7,11 +7,12 @@
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
 #SBATCH --cpus-per-task=10         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem-per-cpu=2GB                  # Request ... GB of RAM in total
-#SBATCH --gres=gpu:0        # Request 1 GPU (A40) per node
+#SBATCH --mem-per-cpu=4GB                  # Request ... GB of RAM in total
 
-BALANCED_OR_UNBALANCED="balanced" # or "unbalanced"
-ALGORITHM="BalancedRandomForestClassifier"
+
+BALANCED_OR_UNBALANCED="unbalanced" # or "unbalanced"
+ALGORITHM="XGBoost"              #!!!!! multivariate not ran for XGBoost and RF unbalanced case (10k shot)
+
 STUDIES=(
     'ChenB_2020' 'YeZ_2018' 'ChuY_2021' 'ZhouC_2020' 'YeohYK_2021'
     'HeQ_2017' 'HuY_2019' 'HuangR_2020' 'LiJ_2017' 'LiR_2021'
@@ -29,11 +30,11 @@ STUDIES=(
 TEST_STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
-mkdir "slurm_logs/${SLURM_JOB_NAME}/${MODEL_NAME}"
-mkdir "slurm_logs/${SLURM_JOB_NAME}/${MODEL_NAME}/${TEST_STUDY}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}"
+mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${TEST_STUDY}"
 
-LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${MODEL_NAME}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.out"
-ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${MODEL_NAME}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.err"
+LOG_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.out"
+ERR_FILE="slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}/${TEST_STUDY}/${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${TEST_STUDY}.err"
 
 
 # Redirect stdout and stderr to these files
@@ -53,11 +54,11 @@ export SSL_CERT_FILE=./cacert.pem
 
 # Setup environment
 module use /opt/insy/modulefiles  # (on DAIC)
-module load cuda/12.1  # If you want to use CUDA, it has to be loaded on the host
+# module load cuda/12.1  # If you want to use CUDA, it has to be loaded on the host
 
 ## Use this simple command to check that your sbatch 
 ## settings are working (it should show the GPU that you requested)
-nvidia-smi
+# nvidia-smi
 
 # Run script
 # Note: There cannot be any characters incuding space behind the `\` symbol.
@@ -65,7 +66,6 @@ srun apptainer exec \
     -B $HOME:$HOME \
     -B /tudelft.net/staff-umbrella/abeellabstudents/sramezani:/tudelft.net/staff-umbrella/abeellabstudents/sramezani \
     --env-file /tudelft.net/staff-umbrella/abeellabstudents/sramezani/.env \
-    --nv \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_baseline_metalearning_inspired \
     --datasource "sun et al" \
@@ -74,8 +74,11 @@ srun apptainer exec \
     --test_study "$TEST_STUDY" \
     --abundance_file "mpa4_species_profile_preprocessed.csv" \
     --metadata_file "sample_group_species_preprocessed.csv" \
-    --train_k_shot 10 \
+    --train_k_shot 25 \
     --positive_class_label "Disease" \
+    --feature_reduction_alg ""
+
+# k=25: 0,2,4,11,16,17,19,21,22,23,24,25,26,27,28,29,32,33,34,35  (20 runs)
 
 # srun apptainer exec \
 #     -B $HOME:$HOME \

@@ -1,14 +1,14 @@
 #!/bin/sh
-#SBATCH --job-name="early_stopping"
-#SBATCH --partition=general,insy,prb,influence # Request partition.
-#SBATCH --qos=short                # This is how you specify QoS
-#SBATCH --time=4:00:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --job-name="stunt_small"
+#SBATCH --partition=general,insy,prb # Request partition.
+#SBATCH --qos=medium                # This is how you specify QoS
+#SBATCH --time=20:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
-#SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem=4GB                  # Request ... GB of RAM in total
-#SBATCH --gres=gpu:1        # Request 1 GPU (A40) per node
+#SBATCH --cpus-per-task=4         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
+#SBATCH --mem-per-cpu=24GB                  # Request ... GB of RAM in total
+#SBATCH --gres=gpu:1              # Request 1 GPU
 #SBATCH --mail-type=FAIL
 
 # If you use DATASETS_ROOT inside your script otherwise remove
@@ -73,19 +73,22 @@ srun apptainer exec \
     --datasource="sun et al" \
     --algorithm="${ALGORITHM}" \
     --balanced_or_unbalanced "$BALANCED_OR_UNBALANCED" \
-    --abundance_file="mpa4_species_profile_preprocessed.csv" \
-    --metadata_file="sample_group_species_preprocessed.csv" \
     --test_study="$STUDY" \
     --n_gradient_steps 5 \
     --n_parallel_tasks 5 \
     --train_k_shot 10 \
     --positive_class_label "Disease" \
     --splitting_method="${SPLITTING_METHOD}" \
-    --resume=True \
-    --jitter_fraction 0.0 \
-    --extra_str_indicator="early_stopping_larger"
+    --abundance_file="stunt/stunt_mpa4_species_profile_preprocessed.csv" \
+    --metadata_file="stunt/stunt_sample_group_species_preprocessed.csv" \
+    --project="stunt_small" \
+    --extra_str_indicator="stunt_larger_es_fraction" \
+    --new_primary=True
     # --feature_reduction_alg="PCA"
+    # --resume=True \
+    # --wait_for_warmup=True \
 
+# k=25: 0,2,4,11,16,17,19,21,22,23,24,25,26,27,28,29,32,33,34,35  (20 runs)
     
     # --what "sun et al" \
     # --config_script "run_configs.rf_baseline_for_sun_et_al" \

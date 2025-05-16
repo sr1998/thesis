@@ -1,14 +1,13 @@
 #!/bin/sh
-#SBATCH --job-name="rf-baseline"
-#SBATCH --partition="insy" # Request partition.
+#SBATCH --job-name="simple_slurm_job"
+#SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
-#SBATCH --time=00:15:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --time=4:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
-#SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem=4GB                  # Request 4 GB of RAM in total
-#SBATCH --gpus-per-task=0
+#SBATCH --cpus-per-task=10         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
+#SBATCH --mem=12GB                  # Request ... GB of RAM in total
 #SBATCH --output=slurm-%x-%j.out   # Set name of output log. %j is the Slurm jobId
 #SBATCH --error=slurm-%x-%j.err    # Set name of error log. %j is the Slurm jobId
 
@@ -16,7 +15,7 @@
 # export DATASETS_ROOT="/scratch/$USER/datasets"
 
 # Assuming you have a dedicated directory for *.sif files
-export APPTAINER_ROOT="/home/nfs/sramezani/thesis/cluster_stuff"
+export APPTAINER_ROOT="/tudelft.net/staff-umbrella/abeellabstudents/sramezani"
 export APPTAINER_NAME="apptainer-for-thesis.sif"
 
 # Setup environment
@@ -33,9 +32,9 @@ srun apptainer exec \
     -B $HOME:$HOME \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.data.mgnify_data_getter \
-    --study_download_label_start "Complete GO" \
-    --study_accessions ["MGYS00003677"] \
+    --study_download_label_start "Taxonomic assignments SSU" \
     --download_metadata True
+    # --study_accessions ["MGYS00000596"] \
 #   -B /projects/:/projects/ \
 #   -B /scratch/$USER:/scratch/$USER \
 

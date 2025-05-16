@@ -2,17 +2,16 @@
 #SBATCH --job-name="baseline"
 #SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
-#SBATCH --time=2:00:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --time=1:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
-#SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
+#SBATCH --cpus-per-task=10         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
 #SBATCH --mem=4GB                  # Request ... GB of RAM in total
-#SBATCH --gres=gpu:a40:1
 #SBATCH --mail-type=FAIL
 
-BALANCED_OR_UNBALANCED="balanced"
-ALGORITHM="NeuralNet"
+BALANCED_OR_UNBALANCED="unbalanced"
+ALGORITHM="BalancedRandomForestClassifier"
 STUDIES=(
     'ChenB_2020' 'ChuY_2021' 'HeQ_2017' 'HuY_2019'
     'HuangR_2020' 'LiJ_2017' 'LiR_2021'
@@ -27,7 +26,7 @@ STUDIES=(
 )
 # 36
 STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
-STUDY=None
+# STUDY=None
 
 mkdir "slurm_logs/${SLURM_JOB_NAME}"
 mkdir "slurm_logs/${SLURM_JOB_NAME}/${ALGORITHM}"
@@ -69,7 +68,7 @@ srun apptainer exec \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.main_baseline \
     --datasource "sun et al" \
-    --config_script "run_configs.overfitting" \
+    --config_script "run_configs.baseline" \
     --algorithm "$ALGORITHM" \
     --balanced_or_unbalanced "$BALANCED_OR_UNBALANCED" \
     --abundance_file "mpa4_species_profile_preprocessed.csv" \

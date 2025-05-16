@@ -2,16 +2,16 @@
 #SBATCH --job-name="baseline_predetermined_data_splits"
 #SBATCH --partition=general,insy # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
-#SBATCH --time=1:30:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --time=3:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
-#SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem=1GB                  # Request ... GB of RAM in total
-#SBATCH --gpus-per-task=0
+#SBATCH --cpus-per-task=10         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
+#SBATCH --mem=4GB                  # Request ... GB of RAM in total
 
-ALGORITHM="RandomForestClassifier" # "RandomForestClassifier" or "BalancedRandomForestClassifier" or "XGBoost" or "NeuralNet"
-BALANCED_OR_UNBALANCED="balanced" # or "unbalanced"
+
+ALGORITHM="XGBoost" # "RandomForestClassifier" or "BalancedRandomForestClassifier" or "XGBoost" or "NeuralNet"
+BALANCED_OR_UNBALANCED="unbalanced" # or "unbalanced"
 STUDIES=(
     'ChenB_2020' 'YeZ_2018' 'ChuY_2021' 'ZhouC_2020' 'YeohYK_2021'
     'HeQ_2017' 'HuY_2019' 'HuangR_2020' 'LiJ_2017' 'LiR_2021'

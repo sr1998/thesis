@@ -1,14 +1,13 @@
 #!/bin/sh
 #SBATCH --job-name="STNT_data_prep"
-#SBATCH --partition=general,insy # Request partition.
-#SBATCH --qos=medium                # This is how you specify QoS
-#SBATCH --time=10:00:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --partition=general,insy,prb,influence # Request partition.
+#SBATCH --qos=short                # This is how you specify QoS
+#SBATCH --time=2:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
 #SBATCH --cpus-per-task=1         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem=2GB                  # Request ... GB of RAM in total
-#SBATCH --gres=gpu:a40:1        # Request 1 GPU (A40) per node
+#SBATCH --mem=16GB                  # Request ... GB of RAM in total
 
 
 
@@ -30,7 +29,7 @@ export SSL_CERT_FILE=./cacert.pem
 
 # Setup environment
 module use /opt/insy/modulefiles  # (on DAIC)
-module load cuda/12.1  # If you want to use CUDA, it has to be loaded on the host
+# module load cuda/12.1  # If you want to use CUDA, it has to be loaded on the host
 
 ls -l /tudelft.net/staff-umbrella/abeellabstudents/sramezani/apptainer-for-thesis.sif
 
@@ -46,7 +45,6 @@ srun apptainer exec \
     -B $HOME:$HOME \
     -B /tudelft.net/staff-umbrella/abeellabstudents/sramezani:/tudelft.net/staff-umbrella/abeellabstudents/sramezani \
     --env-file /tudelft.net/staff-umbrella/abeellabstudents/sramezani/.env \
-    --nv \
     $APPTAINER_ROOT/$APPTAINER_NAME \
     python -m src.data.stunt
 
