@@ -12,8 +12,10 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import ShuffleSplit
+from sklearn.dummy import DummyClassifier
 from tabpfn import TabPFNClassifier
 from xgboost import XGBClassifier
+import torch
 
 import run_configs.optuna_search_space_samplers as sss
 from src.helper_function import create_pipeline
@@ -64,7 +66,8 @@ def get_setup(algorithm):
         "XGBoost": XGBClassifier(n_jobs=n_cpus),
         "NeuralNet": NeuralNetWrapper(),
         "BalancedRandomForestClassifier": BalancedRandomForestClassifier(n_jobs=n_cpus),
-        "TabPFN": TabPFNClassifier(memory_saving_mode=False, n_jobs=n_cpus, ignore_pretraining_limits=True),
+        "TabPFN": TabPFNClassifier(memory_saving_mode=False, n_jobs=n_cpus, device="cuda" if torch.cuda.is_available() else "cpu"),
+        "Dummy": DummyClassifier(strategy="constant", constant=1),
     }[algorithm]
 
     standard_pipeline = create_pipeline(
@@ -108,7 +111,8 @@ def get_setup(algorithm):
         "BalancedRandomForestClassifier": partial(
             sss.rf_search_space_sampler, best_fit_scorer=best_fit_scorer
         ),
-        "TabPFN": None
+        "TabPFN": None,
+        "Dummy": None,
     }[algorithm]
 
     return {

@@ -12,7 +12,7 @@ from src.data.dataloader import (
     KShotSplitter,
     get_cross_validation_sun_et_al_data_splits,
 )
-from src.global_vars import BASE_DATA_DIR
+from src.global_vars import BASE_DATA_DIR, RANDOM_SEED
 
 sys.path.append(".")
 import fire
@@ -268,6 +268,7 @@ def main(
         optuna_study = optuna.create_study(
             direction=tuning_mode,
             study_name=f"outer_cv_{i}_for_{wandb.run.name}",
+            sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED, multivariate=True),
         )
 
         optuna_study.optimize(
@@ -322,7 +323,7 @@ def main(
         # split_config.append(split_entry)
 
         best_model = get_pipeline(
-            datasource, standard_pipeline, search_space_sampler, best_trial
+            datasource, standard_pipeline, best_trial.params
         )
         best_model.fit(train_data, train_labels)
         # save the model

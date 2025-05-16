@@ -11,6 +11,8 @@ from sklearn.metrics import (
 from sklearn.model_selection import ShuffleSplit
 from sklearn.preprocessing import Normalizer
 from xgboost import XGBClassifier
+import os
+from loguru import logger
 
 import run_configs.optuna_search_space_samplers as sss
 from src.helper_function import create_pipeline
@@ -65,9 +67,12 @@ def get_setup(model_name, with_oversampling=True):
             "BalancedRandomForestClassifier should not be used with oversampling"
         )
 
+    n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
+    logger.info(f"n_cpus found:{n_cpus}")
+
     model = {
         "RandomForestClassifier": RandomForestClassifier(),
-        "XGBoost": XGBClassifier(),
+        "XGBoost": XGBClassifier(n_jobs=n_cpus),
         "NeuralNet": NeuralNetWrapper(),
         "BalancedRandomForestClassifier": BalancedRandomForestClassifier(),
     }[model_name]

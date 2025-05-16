@@ -173,6 +173,9 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
         self.groups = list(dataset.group_to_label_idx_per_class.keys())
         self.training = training
 
+        self.cached_eval_batches = None
+        self.cache_eval_batches = True
+
         if self.training:
             # number of batches each group can give is given by its largest class (so we oversample the smaller class)
             # +1 for each group to make sure all data is sampled in each epoch (mainly to prevent issues with large K_shot and small classes)
@@ -211,6 +214,12 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
                 random.shuffle(self.groups_to_sample_eval) 
 
     def __iter__(self):
+        # For eval data with caching
+        if not self.training and self.cached_eval_batches is not None and self.cache_eval_batches:
+            for batch in self.cached_eval_batches:
+                yield batch
+            return
+
         if self.training:    # No shuffle if preselected support set is used
             random.shuffle(self.groups_to_sample_training)
             for group in self.groups:
@@ -244,6 +253,7 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
 
                 yield batch
         else:
+            all_batches = []
             for group in self.groups_to_sample_eval: # group gives a task
                 batch = []
                 label_ids_per_class = self.dataset.group_to_label_idx_per_class[group]
@@ -261,6 +271,12 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
                         batch.extend(label_ids[start_idx:])
                         # start_indices_per_group[group] += len(label_ids[start_idx:])    # not necessary as each group is sampled once
                     
+                all_batches.append(batch)
+
+            if self.cache_eval_batches:
+                self.cached_eval_batches = all_batches
+
+            for batch in all_batches:
                 yield batch
 
     def __len__(self):
@@ -297,8 +313,15 @@ class LabelOnlyDataset(Dataset):
             samples = preprocessor(self.samples)
             
         # Convert to torch tensors
-        self.samples = tensor(samples, dtype=float32)
-        self.labels = tensor(labels, dtype=float32)
+        try:
+            self.samples = tensor(samples, dtype=float32)
+            self.labels = tensor(labels, dtype=float32)
+        except Exception as e:
+            print("sample and labels")
+            print(samples)
+            print(labels)
+            raise e
+
         
         # Store indices by label for efficient sampling
         self.indices_by_label = {}

@@ -150,6 +150,7 @@ def main(
         tax_level,
         algorithm,
         "outer_" + str(outer_cv_config["type"].__name__),
+        positive_class_label + "_pos_class",
     ]
 
     if datasource == "mgnify":
@@ -245,6 +246,7 @@ def main(
         if tuning_num_samples > 0:
             optuna_study = optuna.create_study(
                 direction=tuning_mode, study_name=f"outer_cv_{i}_for_{wandb.run.name}"
+                sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED, multivariate=True),
             )
             optuna_study.optimize(
                 lambda trial: hyp_param_eval_with_cv(
@@ -305,9 +307,10 @@ def main(
             split_config.append(split_entry)
         else:
             best_trial = None
+            best_trial_params = {}
 
         best_model = get_pipeline(
-            datasource, standard_pipeline, search_space_sampler, best_trial
+            datasource, standard_pipeline, best_trial_params
         )
         # set eval data
         if algorithm == "NeuralNet":

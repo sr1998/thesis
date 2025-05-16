@@ -36,12 +36,22 @@ def set_seed(seed=RANDOM_SEED):
     np.random.seed(seed)
 
 
-def microbiome_stunt_data_creator(unlabeled_x: pd.DataFrame, n_tasks, n_data_points, train_or_val, project_name, num_way=2, min_col_ratio=0.4, max_col_ratio=0.7, metadata=None):
+def microbiome_stunt_data_creator(unlabeled_x: pd.DataFrame, n_tasks, n_data_points, train_or_val, project_name, num_way=2, min_col_ratio=0.4, max_col_ratio=0.7, metadata: pd.DataFrame = None):
     # Inspired by https://github.com/jaehyun513/STUNT/blob/main/data/income.py 
     n_data_points_per_task = int(n_data_points // n_tasks)
     # we want to keep the generated classes balanced for training; so we generate same number of points per class
     n_data_points_per_class = int(n_data_points_per_task // num_way)
     
+    counts = metadata["Group"].value_counts()
+
+    # Find groups with insufficient data points
+    small_groups = counts[counts < n_data_points_per_class]
+
+    if not small_groups.empty:
+        for group, count in small_groups.items():
+            print(f"Skipping task {group} as it has only {count} data points, less than {n_data_points_per_class} (project: {project_name})")
+        return pd.DataFrame(), pd.DataFrame()
+
     if train_or_val == "train":
         x = np.array(unlabeled_x)
         num_way = num_way
@@ -280,7 +290,7 @@ def microbiome_stunt_data_creator(unlabeled_x: pd.DataFrame, n_tasks, n_data_poi
 
 #         # return batch
 
-def process_project_group(project_group, idx, data, n_tasks=25, n_data_points=5000):
+def process_project_group(project_group, idx, data, n_tasks=25, n_data_points=5000, metadata=None):
     """Process a single project group and return the results"""
     print(f"Processing project group: {project_group}")
     first_data = data.loc[idx, :]
@@ -289,8 +299,8 @@ def process_project_group(project_group, idx, data, n_tasks=25, n_data_points=50
         n_tasks=n_tasks, 
         n_data_points=n_data_points, 
         train_or_val="train", 
-        metadata=None, 
-        project_name=project_group
+        project_name=project_group,
+        metadata=metadata
     )
     return new_x, new_y
 
@@ -313,31 +323,41 @@ if __name__ == "__main__":
     by_project_grouped_metadata = metadata.groupby("Project_1")
     project_groups = [(group, idx) for group, idx in by_project_grouped_metadata.groups.items()]
 
-    num_cpus = mp.cpu_count() - 1
-    print(num_cpus)
+    n_tasks = 25
+    n_data_points = 1000
 
-    process_func = partial(
-        process_project_group, 
-        data=data, 
-        n_tasks=25, 
-        n_data_points=5000
-    )
+    for project_group, idx in project_groups:
+        new_x, new_y = process_project_group(project_group, idx, data, n_tasks=n_tasks, n_data_points=n_data_points, metadata=metadata)
+        additional_data = pd.concat([additional_data, new_x])
+        additional_metadata = pd.concat([additional_metadata, new_y])
 
-    # Create a pool of workers
-    with mp.Pool(processes=num_cpus) as pool:
-        # Map the function to the project groups
-        results = pool.starmap(
-            process_func, 
-            [(group, idx) for group, idx in project_groups]
-        )
+    # num_cpus = int(os.environ.get('SLURM_CPUS_PER_TASK', mp.cpu_count()))
+    # print(num_cpus)
+
+
+    # process_func = partial(
+    #     process_project_group, 
+    #     data=data, 
+    #     n_tasks=n_tasks, 
+    #     n_data_points=n_data_points,
+    #     metadata=metadata
+    # )
+
+    # # Create a pool of workers
+    # with mp.Pool(processes=num_cpus) as pool:
+    #     # Map the function to the project groups
+    #     results = pool.starmap(
+    #         process_func, 
+    #         [(group, idx) for group, idx in project_groups]
+    #     )
     
-    # Combine results
-    additional_data = pd.concat([x for x, _ in results])
-    additional_metadata = pd.concat([y for _, y in results])
+    # # Combine results
+    # additional_data = pd.concat([x for x, _ in results])
+    # additional_metadata = pd.concat([y for _, y in results])
     
     # Save results
-    additional_data.to_csv(BASE_DATA_DIR / "sun_et_al_data" / "stunt_large" / "stunt_mpa4_species_profile_preprocessed.csv")
-    additional_metadata.to_csv(BASE_DATA_DIR / "sun_et_al_data" / "stunt_large" / "stunt_sample_group_species_preprocessed.csv")
+    additional_data.to_csv(BASE_DATA_DIR / "sun_et_al_data" / "stunt" / f"stunt_mpa4_species_profile_preprocessed_{n_tasks}_{n_data_points}.csv")
+    additional_metadata.to_csv(BASE_DATA_DIR / "sun_et_al_data" / "stunt" / f"stunt_sample_group_species_preprocessed_{n_tasks}_{n_data_points}.csv")
 
     # Print memory usage statistics
     process = psutil.Process(os.getpid())

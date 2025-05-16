@@ -5,13 +5,15 @@ from pathlib import Path
 
 from optuna.visualization import plot_param_importances
 from sklearn.inspection import permutation_importance
+from sklearn.decomposition import PCA
 
 from joblib import dump as joblib_dump
 from src.data.dataloader import (
     get_cross_validation_sun_et_al_data_splits,
     split_sun_et_al_data,
 )
-from src.global_vars import BASE_DATA_DIR
+from src.global_vars import BASE_DATA_DIR, RANDOM_SEED
+from src.data.helper_functions import select_features_by_pc_loadings
 
 sys.path.append(".")
 import fire
@@ -22,6 +24,7 @@ from loguru import logger
 
 import wandb
 from src.helper_function import (
+    check_run_finished,
     df_str_for_loguru,
     encode_labels,
     extend_train_with_support_set_from_eval,
@@ -42,11 +45,11 @@ def main(
     balanced_or_unbalanced: str,
     train_k_shot: int,
     positive_class_label: str | None = None,
-    splitting_method: str = "normal",  # "normal" or "study_wise"
+    splitting_method: str = "study_wise",  # "normal" or "study_wise"
     metadata_cols_to_use_as_features: list[str] = [],
     load_from_cache_if_available: bool = True,
-    features_to_use: list[str] = None,
     save_model: bool = False,
+    feature_reduction_alg: str = "", # or PCA_feat_sel
 ):
     """Run the baseline pipeline for the baseline meta-learning inspired approach."""
     config_script = "run_configs.metalearning_inspired_baseline"
@@ -81,9 +84,6 @@ def main(
         )
 
         metadata = metadata.loc[data.index]
-
-        if features_to_use:
-            data = data.loc[:, features_to_use]
 
         # Get the data splits: outer and inner cross val splits
         (
@@ -133,9 +133,11 @@ def main(
     setup["metdata_cols_to_use_as_features"] = metadata_cols_to_use_as_features
     setup["balanced_or_unbalanced"] = balanced_or_unbalanced
     setup["train_k_shot"] = train_k_shot
+    setup["splitting_method"] = splitting_method
     setup["job_id"] = job_id
     setup["array_job_id"] = array_job_id
     setup["array_task_id"] = array_task_id
+    setup["feature_reduction_alg"] = feature_reduction_alg
 
     wandb_name = f"{datasource}_TS{test_study}_{algorithm}_T{tax_level}_{train_k_shot}shot_{balanced_or_unbalanced}_{array_job_id or job_id}"  # _VS{val_study}
 
@@ -163,7 +165,7 @@ def main(
         balanced_or_unbalanced,
     ]
 
-    logger.success("wandb init done")
+    # check_run_finished(wandb_params["project"], wandb_name)
 
     # Initialize wandb if enabled
     if use_wandb:
@@ -182,7 +184,7 @@ def main(
             tags=wandb_base_tags,
         )
 
-    logger.success("wandb init done")
+    logger.success("wandb init done")    
 
     train_scores = []
     test_scores = []
@@ -194,6 +196,7 @@ def main(
         optuna_study = optuna.create_study(
             direction=tuning_mode,
             study_name=f"hyper-param_optimization_for_{wandb.run.name}",
+            sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED, multivariate=True),
         )
         optuna_study.optimize(
             lambda trial: hyp_param_eval_for_baseline_metalearning(
@@ -207,6 +210,7 @@ def main(
                 best_fit_scorer,
                 search_space_sampler,
                 trial,
+                setup,
             ),
             n_trials=tuning_num_samples,
         )
@@ -250,16 +254,6 @@ def main(
             test_support_set,
         )
 
-        if balanced_or_unbalanced == "balanced":
-            # We give metadata but get labels back
-            train_data_extended, train_labels_extended = make_data_balanced_per_study(
-                train_data_extended, train_metadata_extended
-            )
-        else:
-            train_labels_extended = train_metadata_extended["Group"]
-
-        test_query_labels = test_query_metadata["Group"]
-
         if optuna_study:
             best_trial = optuna_study.best_trial
             # save best trial parameters + split for this loop
@@ -274,12 +268,40 @@ def main(
             # split_config.append(split_entry)
 
             best_model = get_pipeline(
-                datasource, standard_pipeline, search_space_sampler, best_trial
+                datasource, standard_pipeline, best_trial.params
             )
+
+            if "tabpfn" in standard_pipeline.named_steps["model"].__class__.__name__.lower():
+                feature_reduction_n_components = 500
+            else:
+                feature_reduction_n_components = best_trial.params.get("feature_reduction_n_components", 0)
+            feature_reduction_alg = setup["feature_reduction_alg"]
+            if feature_reduction_n_components != 0:
+                if feature_reduction_alg == "PCA":
+                    feature_reduction = PCA(n_components=feature_reduction_n_components)
+                    feature_reduction = feature_reduction.fit(train_data_extended)
+                    train_data_extended = pd.DataFrame(feature_reduction.transform(train_data_extended), index=train_data_extended.index)
+                    test_query_data = pd.DataFrame(feature_reduction.transform(test_query_data), index=test_query_data.index)
+                elif feature_reduction_alg == "PCA_feat_sel":
+                    selected_feats, _, _ = select_features_by_pc_loadings(train_data_extended, n_features=feature_reduction_n_components, n_components=500)
+                    train_data_extended = train_data_extended[selected_feats]
+                    test_query_data = test_query_data[selected_feats]
+                else:
+                    raise ValueError(f"Unknown feature reduction algorithm: {feature_reduction_alg}")
         else:
             best_trial = None
             best_model = standard_pipeline
 
+
+        if balanced_or_unbalanced == "balanced":
+            # We give metadata but get labels back
+            train_data_extended, train_labels_extended = make_data_balanced_per_study(
+                train_data_extended, train_metadata_extended
+            )
+        else:
+            train_labels_extended = train_metadata_extended["Group"]
+
+        test_query_labels = test_query_metadata["Group"]
         best_model.fit(train_data_extended, train_labels_extended)
         # save the model
         if save_model:
