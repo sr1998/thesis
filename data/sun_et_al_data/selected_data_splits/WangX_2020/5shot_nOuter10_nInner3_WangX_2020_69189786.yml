@@ -1,0 +1,146 @@
+- 0:
+  - CKD_CON-048
+  - CKD_CON-044
+  - CKD_CON-021
+  - CKD_CON-064
+  - CKD_CON-060
+  - CKD_KD-115
+  - CKD_KD-014
+  - CKD_KD-214
+  - CKD_KD-218
+  - CKD_KD-203
+  1:
+  - CKD_CON-055
+  - CKD_CON-058
+  - CKD_CON-063
+  - CKD_CON-010
+  - CKD_CON-061
+  - CKD_KD-180
+  - CKD_KD-018
+  - CKD_KD-218
+  - CKD_KD-038
+  - CKD_KD-064
+  2:
+  - CKD_CON-041
+  - CKD_CON-001
+  - CKD_CON-067
+  - CKD_CON-056
+  - CKD_CON-058
+  - CKD_KD-155
+  - CKD_KD-057
+  - CKD_KD-083
+  - CKD_KD-143
+  - CKD_KD-002
+  3:
+  - CKD_CON-048
+  - CKD_CON-034
+  - CKD_CON-050
+  - CKD_CON-046
+  - CKD_CON-058
+  - CKD_KD-207
+  - CKD_KD-126
+  - CKD_KD-062
+  - CKD_KD-005
+  - CKD_KD-172
+  4:
+  - CKD_CON-055
+  - CKD_CON-006
+  - CKD_CON-044
+  - CKD_CON-025
+  - CKD_CON-018
+  - CKD_KD-124
+  - CKD_KD-119
+  - CKD_KD-089
+  - CKD_KD-142
+  - CKD_KD-065
+  5:
+  - CKD_CON-063
+  - CKD_CON-055
+  - CKD_CON-017
+  - CKD_CON-001
+  - CKD_CON-059
+  - CKD_KD-014
+  - CKD_KD-048
+  - CKD_KD-182
+  - CKD_KD-152
+  - CKD_KD-045
+  6:
+  - CKD_CON-054
+  - CKD_CON-002
+  - CKD_CON-021
+  - CKD_CON-040
+  - CKD_CON-055
+  - CKD_KD-020
+  - CKD_KD-130
+  - CKD_KD-068
+  - CKD_KD-077
+  - CKD_KD-126
+  7:
+  - CKD_CON-029
+  - CKD_CON-030
+  - CKD_CON-038
+  - CKD_CON-042
+  - CKD_CON-013
+  - CKD_KD-021
+  - CKD_KD-093
+  - CKD_KD-131
+  - CKD_KD-081
+  - CKD_KD-141
+  8:
+  - CKD_CON-042
+  - CKD_CON-026
+  - CKD_CON-017
+  - CKD_CON-010
+  - CKD_CON-036
+  - CKD_KD-005
+  - CKD_KD-154
+  - CKD_KD-058
+  - CKD_KD-185
+  - CKD_KD-209
+  9:
+  - CKD_CON-041
+  - CKD_CON-010
+  - CKD_CON-062
+  - CKD_CON-034
+  - CKD_CON-014
+  - CKD_KD-084
+  - CKD_KD-196
+  - CKD_KD-205
+  - CKD_KD-139
+  - CKD_KD-162
+- 0:
+  - ZhuQ_2021
+  - - SRR11977463
+    - SRR11977467
+    - SRR11973594
+    - SRR11977469
+    - SRR11977462
+    - SRR11992773
+    - SRR11992802
+    - SRR12005702
+    - SRR12000205
+    - SRR12000207
+  1:
+  - YuJ_2017
+  - - Yu_21
+    - Yu_56
+    - Yu_25
+    - Yu_92
+    - Yu_55
+    - Yu_114
+    - Yu_117
+    - Yu_44
+    - Yu_115
+    - Yu_116
+  2:
+  - ChuY_2021
+  - - C86
+    - C73
+    - C38
+    - C106
+    - C48
+    - G21T0U0A0R2
+    - G08T0U0A0R2
+    - G198T0
+    - G129T0U0A0R2
+    - G05T0U0A0R2
