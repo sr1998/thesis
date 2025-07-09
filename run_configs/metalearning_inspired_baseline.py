@@ -68,6 +68,7 @@ def get_setup(algorithm):
         "BalancedRandomForestClassifier": BalancedRandomForestClassifier(n_jobs=n_cpus),
         "TabPFN": TabPFNClassifier(memory_saving_mode=False, n_jobs=n_cpus, device="cuda" if torch.cuda.is_available() else "cpu"),
         "Dummy": DummyClassifier(strategy="constant", constant=1),
+        "Random": DummyClassifier(strategy="uniform"),
     }[algorithm]
 
     standard_pipeline = create_pipeline(
@@ -113,6 +114,7 @@ def get_setup(algorithm):
         ),
         "TabPFN": None,
         "Dummy": None,
+        "Random": None,
     }[algorithm]
 
     return {

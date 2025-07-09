@@ -298,7 +298,8 @@ class NeuralNetWrapper(ClassifierMixin, BaseEstimator):
                     f"{score_name_prefix}/f1": metrics["f1"],
                     f"{score_name_prefix}/precision": metrics["precision"],
                     f"{score_name_prefix}/recall": metrics["recall"],
-                    f"{score_name_prefix}/roc_auc": metrics["roc_auc"],
+                    f"{score_name_prefix}/average_precision": metrics["average_precision"],
+                    
                 }
                 if epoch is not None:
                     to_log["epoch"] = epoch

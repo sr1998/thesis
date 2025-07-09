@@ -332,24 +332,34 @@ def get_cross_validation_sun_et_al_data_splits(
     )
 
     rng = np.random.default_rng(string_seed)
+    study_names: list = sorted(metadata["Project_1"].unique().tolist())
+    if test_study:
+        test_metadata_df = metadata[metadata["Project_1"] == test_study]
+        test_data_df = abundance_data.loc[test_metadata_df.index]
+        train_metadata_df = metadata.drop(index=test_metadata_df.index)
+        train_data_df = abundance_data.drop(index=test_data_df.index)
 
-    study_names: list = metadata["Project_1"].unique().tolist()
-    test_metadata_df = metadata[metadata["Project_1"] == test_study]
-    test_data_df = abundance_data.loc[test_metadata_df.index]
-    train_metadata_df = metadata.drop(index=test_metadata_df.index)
-    train_data_df = abundance_data.drop(index=test_data_df.index)
+        # if test_study can't provide 2*k_shot samples for the fewest occuring label, throw error
+        min_label_count = test_metadata_df["Group"].value_counts().min()
+        if min_label_count < 2 * k_shot:
+            logger.warning(
+                f"{test_study} can't give with 2*{k_shot} samples for the fewest occuring label. CANCELLING RUN."
+            )
+            raise ValueError(
+                f"{test_study} can't give with 2*{k_shot} samples for the fewest occuring label."
+            )
 
-    # if test_study can't provide 2*k_shot samples for the fewest occuring label, throw error
-    min_label_count = test_metadata_df["Group"].value_counts().min()
-    if min_label_count < 2 * k_shot:
+        remaining_studies = [study for study in study_names if study != test_study]
+
+    else:
         logger.warning(
-            f"{test_study} can't give with 2*{k_shot} samples for the fewest occuring label. CANCELLING RUN."
+            "No test study provided. Using all studies for training and testing."
         )
-        raise ValueError(
-            f"{test_study} can't give with 2*{k_shot} samples for the fewest occuring label."
-        )
-
-    remaining_studies = [study for study in study_names if study != test_study]
+        test_metadata_df = None
+        test_data_df = None
+        train_metadata_df = metadata
+        train_data_df = abundance_data
+        remaining_studies = [study for study in study_names]
 
     # Load the data splits if they exist
     save_in = BASE_DATA_DIR / "sun_et_al_data" / "selected_data_splits" / test_study

@@ -48,6 +48,7 @@ def main(
     metadata_file: str | Path,
     test_study: str,
     balanced_or_unbalanced: str,
+    new_copied_run: bool,
     # val_study: list,                      # random selection done
     # outer_lr_range: tuple[float, float],  # optimization
     # inner_lr_range: tuple[float, float],  # optimization
@@ -56,7 +57,7 @@ def main(
     n_parallel_tasks: int,  # TODO Could be a hyperparam
     train_k_shot: int,
     splitting_method: str = "study_wise",  # "normal" or "study_wise"
-    # eval_k_shot: int = None,              # skip
+    eval_k_shot: int = None,              # skip
     # n_components_reduction_factor: int = 0,  # 0 or 1 for no PCA at all   # skip
     # use_cached_pca: bool = False,         # skip
     # do_normalization_before_scaling: bool = True, # optimization
@@ -78,6 +79,7 @@ def main(
 ):
     set_seed(random_seed)
     project = project or "metalearning"
+    eval_k_shot = eval_k_shot or train_k_shot
     
     config_script = "run_configs.metalearning"
     config_module = import_module(config_script)
@@ -95,7 +97,7 @@ def main(
     ) = setup.values()
 
     if loss_fn == "BCELog":
-        loss_fn = nn.BCEWithLogitsLoss()
+        loss_fn = nn.BCEWithLogitsLoss
     else:
         raise ValueError("Loss function not recognized.")
 
@@ -181,7 +183,7 @@ def main(
             sun_et_al_abundance,
             sun_et_al_metadata,
             test_study=test_study,
-            k_shot=train_k_shot,
+            k_shot=eval_k_shot,
             balanced_or_unbalanced=balanced_or_unbalanced,
             n_outer_splits=n_outer_splits,
             n_inner_splits=n_inner_splits,
@@ -206,14 +208,37 @@ def main(
         algorithm,
         tax_level,
         str(train_k_shot) + "_shot",
+        str(eval_k_shot) + "_e_shot",
         datasource,
         balanced_or_unbalanced,
         # "e_k" + str(eval_k_shot),
     ]
 
     wandb_name = f"TS{test_study}_TK{train_k_shot}_{balanced_or_unbalanced}_{datasource}_{algorithm}_T{tax_level}_{extra_str_indicator}"
+    p = "metalearning2" if eval_k_shot != train_k_shot or new_copied_run else project
+    if eval_k_shot != train_k_shot or new_copied_run:
+        # copy resume directory if it exists
+        resume_dir = get_resume_dir_for_experiment(
+            p, algorithm, test_study, wandb_name
+        )
+        new_resume_dir = get_resume_dir_for_experiment(
+            project, algorithm, test_study, wandb_name + "Ek" + str(eval_k_shot)
+        )
+        if resume_dir != new_resume_dir:
+            if resume_dir.exists():
+                logger.info(f"Copying resume directory from {resume_dir} to {new_resume_dir}")
+                new_resume_dir.mkdir(parents=True, exist_ok=True)
+                # copy with shutil
+                import shutil
+                shutil.copytree(resume_dir, new_resume_dir, dirs_exist_ok=True)
+                
+        resume_dir = new_resume_dir
+        logger.info(f"Using resume directory: {resume_dir}")
+    else:
+        new_resume_dir = None
+
     # Set up checkpoint path and load checkpoint if resuming
-    resume_dir = get_resume_dir_for_experiment(
+    resume_dir = new_resume_dir or get_resume_dir_for_experiment(
         project, algorithm, test_study, wandb_name
     )
     checkpoint_path = str(resume_dir / "checkpoint.yaml")
@@ -234,7 +259,7 @@ def main(
         "n_gradient_steps": n_gradient_steps,
         "n_parallel_tasks": n_parallel_tasks,
         "train_k_shot": train_k_shot,
-        # "eval_k_shot": eval_k_shot,
+        "eval_k_shot": eval_k_shot,
         # "n_components_reduction_factor": n_components_reduction_factor,
         # "use_cache_pca": use_cached_pca,
         # "do_normalization_before_scaling": do_normalization_before_scaling,
@@ -326,6 +351,10 @@ def main(
             checkpoint["primary_job_id"] = job_identifier
             checkpoint["optimization_done"] = True
 
+    if eval_k_shot != train_k_shot or new_copied_run:
+        checkpoint["completed_folds"] = []
+        checkpoint["fold_metrics"] = {}
+
     save_checkpoint(checkpoint_path, checkpoint)
 
     train_scores = []
@@ -365,7 +394,6 @@ def main(
         logger.info(f"trials_to_do: {trials_to_do}")
 
         if trials_to_do > 0 and not checkpoint["optimization_done"]:
-            # Primary job handles warmup phase
             if is_primary and not checkpoint.get("warmup_completed", False):
                 if initial_trial:
                     optuna_study.enqueue_trial(initial_trial)
@@ -506,7 +534,76 @@ def main(
 
     best_trial_config = search_space_sampler(best_trial)
     wandb.log(best_trial_config)
+    for i, s in enumerate(best_trial_config["model__layer_sizes"]):
+        wandb.log(
+            {f"model__layer_sizes_{i}": s})
     logger.info(f"best_trail_config:\n{best_trial_config}")
+
+
+    logger.info("Testin on the validation sets to log the best model performance")
+
+    val_scores = []
+    val_train_scores = []
+    for j, (val_study_name, val_support_sets) in val_loop_data_selection.items():
+        val_metadata = train_metadata[
+            train_metadata["Project_1"] == val_study_name
+        ]
+        val_data = train_data.loc[val_metadata.index]
+        val_split_train_data = train_data.drop(index=val_metadata.index)
+        val_split_train_metadata = train_metadata.drop(index=val_metadata.index)
+
+        model, train_loader, val_loader, eval_loader = get_metalearning_model_from_trial(
+            val_split_train_data,
+            val_data,
+            val_split_train_metadata,
+            val_metadata,
+            train_k_shot,
+            eval_k_shot,
+            val_support_sets,
+            algorithm,
+            best_trial_config,
+            config,
+        )
+
+        logger.info("Fitting model")
+        val_train_results, val_results = model.fit(
+            train_dataloader=train_loader,
+            n_epochs=best_trial_config["max_epochs"],
+            n_parallel_tasks=config["n_parallel_tasks"],
+            val_dataloader=val_loader,
+            eval_dataloader=eval_loader,
+            early_stopping_patience=best_trial_config["early_stopping_patience"],
+            early_stopping_fraction=best_trial_config["early_stopping_fraction"],
+            # early_stopping_metric=early_stop_metric,
+            log_metrics=False,  # Disable wandb logging during optimization
+            score_name_prefix=f"fold{j}",
+            track_best_f1=config["track_best_f1"],
+        )
+
+        val_train_results = (
+            {
+                k: v.tolist() if hasattr(v, "tolist") else v
+                for k, v in val_train_results.items()
+                if k != "predictions" and k != "targets"
+            }
+            if val_train_results
+            else {}
+        )
+        val_results = {
+            k: v.tolist() if hasattr(v, "tolist") else v
+            for k, v in val_results.items()
+            if k != "predictions" and k != "targets"
+        }
+
+        val_train_scores.append(val_train_results)
+        val_scores.append(val_results)
+
+        val_train_results = {"val_train/" + k: v for k, v in val_train_results.items()}
+        val_results = {"val/" + k: v for k, v in val_results.items()}
+        wandb.log(
+            {"Outer fold": dict(val_train_results, **val_results)},
+        )
+        
 
     for i, test_support_set in test_loop_data_selection.items():
         fold_id = str(i)
@@ -531,7 +628,7 @@ def main(
                 train_metadata,
                 test_metadata,
                 train_k_shot,
-                train_k_shot,
+                eval_k_shot,
                 test_support_set,
                 algorithm,
                 best_trial_config,

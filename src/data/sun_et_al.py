@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from torch import float32, tensor, randn_like
 from torch.utils.data import Dataset, Sampler
+import torch
 
 from src.helper_function import circular_slice, df_str_for_loguru
 from src.preprocessing.functions import pandas_label_encoder
@@ -20,11 +21,12 @@ class MicrobiomeDataset(Dataset):
         samples: pd.DataFrame,
         label_and_project: pd.DataFrame,
         preprocessor=None,
-        target_preprocessor=pandas_label_encoder,   # TODO We want disease to be the positive class
+        target_preprocessor=pandas_label_encoder,
         transform=None,
         target_transform=None,
-        preselected_support_set: list[str] = None,  # only for val and test#TODO test thoroughly
+        preselected_support_set: list[str] = None,  # only for val and test
         jitter_fraction: float = 0.0,       # 10 % of within‑study σ  (tune as you like)
+        device: str = "cpu",
     ):
         """Constructor for the MicrobiomeDataset class.
 
@@ -50,6 +52,7 @@ class MicrobiomeDataset(Dataset):
         ), "Indices of both dataframes must be the same"
 
         self.samples = samples
+        self.device = device
 
         self.preselected_support_set_used = bool(preselected_support_set)
         if self.preselected_support_set_used:
@@ -119,7 +122,7 @@ class MicrobiomeDataset(Dataset):
         proj = self.projects[idx]
 
         if self.jitter_fraction:
-            sigma_vec = self.project_sigma[proj].to(sample.device)
+            sigma_vec = self.project_sigma[proj]
             noise = randn_like(sample) * sigma_vec
             sample = sample + noise
 
@@ -128,6 +131,9 @@ class MicrobiomeDataset(Dataset):
 
         if self.target_transform:
             label = self.target_transform(label)
+
+        # sample = sample.to(self.device)
+        # label = label.to(self.device)
 
         return sample, label
 
@@ -268,7 +274,10 @@ class BinaryFewShotBatchSampler(Sampler[list[int]]):
                 start_idx = start_indices_per_group[group]
                 if self.include_query:
                     for label_ids in label_ids_per_class.values():
-                        batch.extend(label_ids[start_idx:])
+                        new_idx = label_ids[start_idx:]
+                        if new_idx is None or len(new_idx) == 0:
+                            new_idx = circular_slice(label_ids, start_idx, start_idx + self.k_shot)
+                        batch.extend(new_idx)
                         # start_indices_per_group[group] += len(label_ids[start_idx:])    # not necessary as each group is sampled once
                     
                 all_batches.append(batch)
@@ -296,6 +305,7 @@ class LabelOnlyDataset(Dataset):
         preprocessor=None,
         transform=None,
         target_transform=None,
+        device='cpu',
     ):
         """Constructor for the LabelOnlyDataset class.
 
@@ -311,17 +321,17 @@ class LabelOnlyDataset(Dataset):
         # Apply preprocessor if provided
         if preprocessor is not None:
             samples = preprocessor(self.samples)
-            
-        # Convert to torch tensors
-        try:
-            self.samples = tensor(samples, dtype=float32)
-            self.labels = tensor(labels, dtype=float32)
-        except Exception as e:
-            print("sample and labels")
-            print(samples)
-            print(labels)
-            raise e
 
+        # Convert to tensors and move to device in constructor
+        if isinstance(samples, torch.Tensor):
+            self.samples = samples.to(device)
+        else:
+            self.samples = torch.tensor(samples, dtype=torch.float32).to(device)
+            
+        if isinstance(labels, torch.Tensor):
+            self.labels = labels.to(device)
+        else:
+            self.labels = torch.tensor(labels, dtype=torch.float32).to(device)
         
         # Store indices by label for efficient sampling
         self.indices_by_label = {}

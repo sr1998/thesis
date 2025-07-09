@@ -50,8 +50,11 @@ def main(
     load_from_cache_if_available: bool = True,
     save_model: bool = False,
     feature_reduction_alg: str = "", # or PCA_feat_sel
+    eval_k_shot: int = None,
 ):
     """Run the baseline pipeline for the baseline meta-learning inspired approach."""
+    eval_k_shot = eval_k_shot or train_k_shot
+
     config_script = "run_configs.metalearning_inspired_baseline"
     config_module = import_module(config_script)
     setup = config_module.get_setup(algorithm)
@@ -97,7 +100,7 @@ def main(
             data,
             metadata,
             test_study=test_study,
-            k_shot=train_k_shot,
+            k_shot=eval_k_shot,
             balanced_or_unbalanced=balanced_or_unbalanced,
             n_outer_splits=n_outer_splits,
             n_inner_splits=n_inner_splits,
@@ -138,6 +141,7 @@ def main(
     setup["array_job_id"] = array_job_id
     setup["array_task_id"] = array_task_id
     setup["feature_reduction_alg"] = feature_reduction_alg
+    setup["eval_k_shot"] = eval_k_shot
 
     wandb_name = f"{datasource}_TS{test_study}_{algorithm}_T{tax_level}_{train_k_shot}shot_{balanced_or_unbalanced}_{array_job_id or job_id}"  # _VS{val_study}
 
@@ -163,6 +167,7 @@ def main(
         tax_level,
         str(train_k_shot) + "shot",
         balanced_or_unbalanced,
+        str(eval_k_shot) + "EShot",
     ]
 
     # check_run_finished(wandb_params["project"], wandb_name)
@@ -254,11 +259,27 @@ def main(
             test_support_set,
         )
 
+        if "tabpfn" in standard_pipeline.named_steps["model"].__class__.__name__.lower():
+            feature_reduction_n_components = 500
+        if feature_reduction_n_components != 0:
+            if feature_reduction_alg == "PCA":
+                feature_reduction = PCA(n_components=feature_reduction_n_components)
+                feature_reduction = feature_reduction.fit(train_data_extended)
+                train_data_extended = pd.DataFrame(feature_reduction.transform(train_data_extended), index=train_data_extended.index)
+                test_query_data = pd.DataFrame(feature_reduction.transform(test_query_data), index=test_query_data.index)
+            elif feature_reduction_alg == "PCA_feat_sel":
+                selected_feats, _, _ = select_features_by_pc_loadings(train_data_extended)
+                train_data_extended = train_data_extended[selected_feats]
+                test_query_data = test_query_data[selected_feats]
+            else:
+                raise ValueError(f"Unknown feature reduction algorithm: {feature_reduction_alg}")
+
         if optuna_study:
             best_trial = optuna_study.best_trial
             # save best trial parameters + split for this loop
             best_trial_params = best_trial.params
             best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+            wandb.log(search_space_sampler(best_trial))
             # Convert to a dictionary format for easier table storage
             # split_entry = {
             #     "outer_cv_split": i,
@@ -271,10 +292,7 @@ def main(
                 datasource, standard_pipeline, best_trial.params
             )
 
-            if "tabpfn" in standard_pipeline.named_steps["model"].__class__.__name__.lower():
-                feature_reduction_n_components = 500
-            else:
-                feature_reduction_n_components = best_trial.params.get("feature_reduction_n_components", 0)
+            feature_reduction_n_components = best_trial.params.get("feature_reduction_n_components", 0)
             feature_reduction_alg = setup["feature_reduction_alg"]
             if feature_reduction_n_components != 0:
                 if feature_reduction_alg == "PCA":

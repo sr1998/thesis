@@ -1,13 +1,13 @@
 #!/bin/sh
-#SBATCH --job-name="stunt_small"
+#SBATCH --job-name="protonet_low_weight_decay" # Job name
 #SBATCH --partition=general,insy,prb # Request partition.
 #SBATCH --qos=medium                # This is how you specify QoS
-#SBATCH --time=20:00:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --time=7:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
-#SBATCH --cpus-per-task=4         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem-per-cpu=24GB                  # Request ... GB of RAM in total
+#SBATCH --cpus-per-task=8         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
+#SBATCH --mem=8GB                  # Request ... GB of RAM in total
 #SBATCH --gres=gpu:1              # Request 1 GPU
 #SBATCH --mail-type=FAIL
 
@@ -28,6 +28,11 @@ STUDIES=(
     'JieZ_2017' 'WangQ_2021' 'ZengQ_2021' 'HanL_2021'
     'QinJ_2012'
 )
+# STUDIES=(
+#     'YeZ_2018' 'HuY_2019' 'MaoL_2021' 'HeQ_2017' 'YanQ_2017' 'ZhuJ_2018'
+#     'YuJ_2017' 'WanY_2021' 'YeZ_2020' 'ZhuQ_2021' 'ChuY_2021' 'ZhangX_2015'
+#     'YangY_2021' 'ChenB_2020' 'QinN_2014' 'JieZ_2017' 'QinJ_2012'
+# )
 
 STUDY="${STUDIES[$SLURM_ARRAY_TASK_ID]}"
 
@@ -53,7 +58,7 @@ export SSL_CERT_FILE=./cacert.pem
 module use /opt/insy/modulefiles  # (on DAIC)
 module load cuda/12.1  # If you want to use CUDA, it has to be loaded on the host
 
-ls -l /tudelft.net/staff-umbrella/abeellabstudents/sramezani/apptainer-for-thesis.sif
+ls -l /tudelft.net/staff-umbrella/abeellabstudents3/sramezani/apptainer-for-thesis.sif
 
 ## Use this simple command to check that your sbatch 
 ## settings are working (it should show the GPU that you requested)
@@ -79,17 +84,19 @@ srun apptainer exec \
     --train_k_shot 10 \
     --positive_class_label "Disease" \
     --splitting_method="${SPLITTING_METHOD}" \
-    --abundance_file="stunt/stunt_mpa4_species_profile_preprocessed.csv" \
-    --metadata_file="stunt/stunt_sample_group_species_preprocessed.csv" \
-    --project="stunt_small" \
-    --extra_str_indicator="stunt_larger_es_fraction" \
-    --new_primary=True
-    # --feature_reduction_alg="PCA"
+    --abundance_file="mpa4_species_profile_preprocessed.csv" \
+    --metadata_file="sample_group_species_preprocessed.csv" \
+    --project="protonet_low_weight_decay" \
+    --extra_str_indicator="" \
+    --new_primary=True \
+    --new_copied_run=False
+    # --eval_k_shot 50
+    # --feature_reduction_alg="" \
     # --resume=True \
     # --wait_for_warmup=True \
 
 # k=25: 0,2,4,11,16,17,19,21,22,23,24,25,26,27,28,29,32,33,34,35  (20 runs)
-    
+
     # --what "sun et al" \
     # --config_script "run_configs.rf_baseline_for_sun_et_al" \
     # --study "JieZ_2017"\

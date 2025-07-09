@@ -247,7 +247,7 @@ def main(
         if tuning_num_samples > 0 and search_space_sampler is not None:
             optuna_study = optuna.create_study(
                 direction=tuning_mode, study_name=f"outer_cv_{i}_for_{wandb.run.name}",
-                sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED, multivariate=True),
+                sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED, multivariate=False),
             )
             optuna_study.optimize(
                 lambda trial: hyp_param_eval_with_cv(
@@ -265,40 +265,41 @@ def main(
                 n_trials=tuning_num_samples,
             )
 
-            try:
-                fig = plot_param_importances(optuna_study)
-                wandb.log({f"param_imp_fig_outer_loop_{i}": wandb.Plotly(fig)})
-                param_importance = optuna.importance.get_param_importances(optuna_study)
-                param_importance_df = pd.DataFrame(
-                    {
-                        "Parameter": list(param_importance.keys()),
-                        "Importance": list(param_importance.values()),
-                    }
-                )
-                # wandb.log(
-                #     {
-                #         f"param_imp_outer_loop_{i}": wandb.Table(
-                #             dataframe=param_importance_df
-                #         )
-                #     }
-                # )
-                param_importance_df.to_csv(
-                    run_dir / f"param_importance_outer_loop_{i}.csv", index=False
-                )
-            except Exception:
-                logger.error("Error in plotting parameter importances")
+            # try:
+            #     fig = plot_param_importances(optuna_study)
+            #     wandb.log({f"param_imp_fig_outer_loop_{i}": wandb.Plotly(fig)})
+            #     param_importance = optuna.importance.get_param_importances(optuna_study)
+            #     param_importance_df = pd.DataFrame(
+            #         {
+            #             "Parameter": list(param_importance.keys()),
+            #             "Importance": list(param_importance.values()),
+            #         }
+            #     )
+            #     # wandb.log(
+            #     #     {
+            #     #         f"param_imp_outer_loop_{i}": wandb.Table(
+            #     #             dataframe=param_importance_df
+            #     #         )
+            #     #     }
+            #     # )
+            #     param_importance_df.to_csv(
+            #         run_dir / f"param_importance_outer_loop_{i}.csv", index=False
+            #     )
+            # except Exception:
+            #     logger.error("Error in plotting parameter importances")
 
             best_trial = optuna_study.best_trial
             # save best trial parameters + split for this loop
             best_trial_params = best_trial.params
-            best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+            best_trial_params_str = {k: str(v) for k, v in best_trial_params.items()}
+            best_trial_params = search_space_sampler(optuna_study.best_trial)
 
             # Convert to a dictionary format for easier table storage
             split_entry = {
                 "outer_cv_split": i,
                 "train_size": len(train_index),
                 "test_size": len(test_index),
-                **best_trial_params,  # Add all hyperparameters
+                **best_trial_params_str,  # Add all hyperparameters
                 "train_indices": ";".join(
                     map(str, train_index)
                 ),  # Store indices as a semicolon-separated string
@@ -363,20 +364,20 @@ def main(
         # )
 
         # Random Forest feature importance
-        if hasattr(best_model.named_steps["model"], "feature_importances_"):
-            rf_importance = best_model.named_steps["model"].feature_importances_
+        # if hasattr(best_model.named_steps["model"], "feature_importances_"):
+        #     rf_importance = best_model.named_steps["model"].feature_importances_
 
-            rf_importance_df = pd.DataFrame(
-                {
-                    "Feature": X_train.columns,
-                    "RF Importance": rf_importance,
-                    "Outer CV Split": i,
-                }
-            )
+        #     rf_importance_df = pd.DataFrame(
+        #         {
+        #             "Feature": X_train.columns,
+        #             "RF Importance": rf_importance,
+        #             "Outer CV Split": i,
+        #         }
+        #     )
 
-            split_rf_importance_df = pd.concat(
-                [split_rf_importance_df, rf_importance_df], axis=0
-            )
+        #     split_rf_importance_df = pd.concat(
+        #         [split_rf_importance_df, rf_importance_df], axis=0
+        #     )
 
     # log mean and std of the results
     train_scores = pd.DataFrame(train_scores)
@@ -421,33 +422,33 @@ def main(
     #     {"Permutation Feature Imp": wandb.Table(dataframe=split_permutation_importance)}
     # )
 
-    if hasattr(best_model.named_steps["model"], "feature_importances_"):
-        # Save RF feature importance
-        feature_importance_path = run_dir / "feature_importance.csv"
-        split_rf_importance_df.to_csv(feature_importance_path, index=False)
-        # wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
+    # if hasattr(best_model.named_steps["model"], "feature_importances_"):
+    #     # Save RF feature importance
+    #     feature_importance_path = run_dir / "feature_importance.csv"
+    #     split_rf_importance_df.to_csv(feature_importance_path, index=False)
+    #     # wandb.log({"RF Feature Imp": wandb.Table(dataframe=split_rf_importance_df)})
 
-        # mean and std of importance of outer runs
-        rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
-        rf_importance_std = split_rf_importance_df.groupby("Feature").std()
+    #     # mean and std of importance of outer runs
+    #     rf_importance_mean = split_rf_importance_df.groupby("Feature").mean()
+    #     rf_importance_std = split_rf_importance_df.groupby("Feature").std()
 
-        rf_importance_summary_df = pd.DataFrame(
-            {
-                "Feature": rf_importance_mean.index,
-                "Mean Importance": rf_importance_mean["RF Importance"],
-                "Std Importance": rf_importance_std["RF Importance"],
-            }
-        )
+    #     rf_importance_summary_df = pd.DataFrame(
+    #         {
+    #             "Feature": rf_importance_mean.index,
+    #             "Mean Importance": rf_importance_mean["RF Importance"],
+    #             "Std Importance": rf_importance_std["RF Importance"],
+    #         }
+    #     )
 
-        # wandb.log(
-        #     {
-        #         "RF Feature Importance Summary": wandb.Table(
-        #             dataframe=rf_importance_summary_df
-        #         )
-        #     }
-        # )
-        importance_summary_path = run_dir / "feature_importance_summary.csv"
-        rf_importance_summary_df.to_csv(importance_summary_path, index=False)
+    #     # wandb.log(
+    #     #     {
+    #     #         "RF Feature Importance Summary": wandb.Table(
+    #     #             dataframe=rf_importance_summary_df
+    #     #         )
+    #     #     }
+    #     # )
+    #     importance_summary_path = run_dir / "feature_importance_summary.csv"
+    #     rf_importance_summary_df.to_csv(importance_summary_path, index=False)
 
     logger.success("Done!")
     wandb.finish()

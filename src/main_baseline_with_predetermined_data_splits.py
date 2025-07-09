@@ -261,8 +261,13 @@ def main(
         # With random state defined like this, each experiment is reproducible but the inner cv splits are different per outer cv split
         # random_state = RandomState(i_outer_split)
         random_state = RandomState(i)
-        inner_cv = inner_cv_config["type"](
-            **inner_cv_config["params"], random_state=random_state
+        # inner_cv = inner_cv_config["type"](
+        #     **inner_cv_config["params"], random_state=random_state
+        # )
+        inner_cv = KShotSplitter(
+            n_splits=n_inner_splits,
+            k_shot=train_k_shot,
+            random_state=random_state,
         )
 
         optuna_study = optuna.create_study(
@@ -314,6 +319,7 @@ def main(
         # save best trial parameters + split for this loop
         best_trial_params = best_trial.params
         best_trial_params = {k: str(v) for k, v in best_trial_params.items()}
+        best_trial_params = search_space_sampler(optuna_study.best_trial)
         # Convert to a dictionary format for easier table storage
         # split_entry = {
         #     "outer_cv_split": i,
@@ -323,7 +329,7 @@ def main(
         # split_config.append(split_entry)
 
         best_model = get_pipeline(
-            datasource, standard_pipeline, best_trial.params
+            datasource, standard_pipeline, best_trial_params
         )
         best_model.fit(train_data, train_labels)
         # save the model

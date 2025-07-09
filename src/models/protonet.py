@@ -44,9 +44,6 @@ def soft_dice_score(
     # Ensure target has same shape as output
     if target.dim() == 1:
         target = target.unsqueeze(1)
-
-    print(target)
-    print(output)
         
     assert output.size() == target.size()
     if dims is not None:
@@ -206,6 +203,67 @@ class FocalTverskyLoss(torch.nn.Module):
         return FocalTversky
 
 
+# class FocalLoss(torch.nn.Module):
+#     def __init__(self, alpha=None, gamma=2):
+#         super().__init__()
+#         self.alpha = alpha  # Can be tensor of per-class weights
+#         self.gamma = gamma
+    
+#     def forward(self, inputs, targets):
+#         ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+#         pt = torch.exp(-ce_loss)
+        
+#         # Apply class-specific alpha if provided
+#         if self.alpha is not None:
+#             alpha_t = self.alpha[targets]
+#             focal_loss = alpha_t * (1-pt)**self.gamma * ce_loss
+#         else:
+#             focal_loss = (1-pt)**self.gamma * ce_loss
+            
+#         return focal_loss.mean()
+    
+    
+class FocalLoss(torch.nn.Module):
+    def __init__(self, alpha=1, gamma=2):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+    
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * ce_loss
+        return focal_loss.mean()
+
+
+class sigmoidF1(nn.Module):
+    """from https://github.com/gabriben/metrics-as-losses/blob/main/VLAP/pytorchLosses.py"""
+    def __init__(self, S = -1, E = 0):
+        super(sigmoidF1, self).__init__()
+        self.S = S
+        self.E = E
+
+    @torch.cuda.amp.autocast()
+    def forward(self, y_hat, y):
+        
+        y_hat = torch.sigmoid(y_hat)
+
+        b = torch.tensor(self.S)
+        c = torch.tensor(self.E)
+
+        sig = 1 / (1 + torch.exp(b * (y_hat + c)))
+
+        tp = torch.sum(sig * y, dim=0)
+        fp = torch.sum(sig * (1 - y), dim=0)
+        fn = torch.sum((1 - sig) * y, dim=0)
+
+        sigmoid_f1 = 2*tp / (2*tp + fn + fp + 1e-16)
+        cost = 1 - sigmoid_f1
+        macroCost = torch.mean(cost)
+
+        return macroCost
+    
+
 def euclidean_dist(x, y):
     # # Code taken from https://github.com/jakesnell/prototypical-networks/blob/master/protonets/models/few_shot.py
     # x: N x D
@@ -275,6 +333,8 @@ class ProtoNet(nn.Module):
         self.encoder = encoder
         self.dice_loss = DiceLoss(mode="binary")
         self.focal_tversky_loss = FocalTverskyLoss()
+        self.focal_loss = FocalLoss()
+        self.sigmoid_f1 = sigmoidF1()
 
     @staticmethod
     def calculate_prototypes_robust(features, targets, alpha=0.9):
@@ -356,7 +416,7 @@ class ProtoNet(nn.Module):
         preds = F.log_softmax(-dist, dim=1)
         labels = (classes[None, :] == targets[:, None]).long().argmax(dim=-1)
         # acc = (preds.argmax(dim=1) == labels).float().mean()
-        return preds, labels
+        return preds, labels, dist
     
     def classify_feats_with_cosine_similarity(self, prototypes, classes, feats, targets):
         # Use cosine similarity instead of Euclidean distance
@@ -371,18 +431,24 @@ class ProtoNet(nn.Module):
         preds = F.log_softmax(similarity, dim=1)
         labels = (classes[None, :] == targets[:, None]).long().argmax(dim=-1)
     
-        return preds, labels
+        return preds, labels, None
 
     def loss(self, X_support, X_query, y_support, y_query, class_weights_loss_fn):
         # Determine training loss for a given support and query set
         support_feats = self.encoder(X_support)
         query_feats = self.encoder(X_query)
         prototypes, classes = ProtoNet.calculate_prototypes(support_feats, y_support)
-        preds, labels = self.classify_feats(prototypes, classes, query_feats, y_query)
+        preds, labels, dist = self.classify_feats(prototypes, classes, query_feats, y_query)
         loss = F.cross_entropy(preds, labels, weight=class_weights_loss_fn)
         # loss = self.dice_loss(preds, labels)
         # loss = self.focal_tversky_loss(preds, labels)
         # loss = F.nll_loss(preds, labels)  # Negative log likelihood loss
+        # loss = self.focal_loss(preds, labels)
+
+        # Sigmoid F1 loss
+        # probs = F.softmax(-dist, dim=1)  # Convert distances to probabilities
+        # y_one_hot = F.one_hot(labels, num_classes=len(classes)).float()
+        # loss = self.sigmoid_f1(probs, y_one_hot)
         return loss, preds.argmax(dim=1), labels
 
 
@@ -403,8 +469,6 @@ class ProtonetTrainer:
         class_weights_loss_fn = (.5, .5),
         evaluate_every: int = 10,
     ):
-        # Store model and configuration
-        self.protonet = ProtoNet(model).to(device)
 
         # Store parameters
         self.device = device
@@ -415,6 +479,9 @@ class ProtonetTrainer:
         self.eval_k_shot = eval_k_shot or train_k_shot
         self.weight_decay = weight_decay
         self.class_weights_loss_fn = torch.tensor(class_weights_loss_fn).to(device)
+
+        # Store model and configuration
+        self.protonet = ProtoNet(model).to(device)
 
         # Training state
         self.optimizer = None
@@ -430,7 +497,8 @@ class ProtonetTrainer:
             step_size=self.scheduler_step,
             gamma=self.scheduler_gamma,
         )
-        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=self.scheduler_gamma)
+        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=self.scheduler_gamma, patience=self.scheduler_step)
+        # self.last_lr = self.optimizer.param_groups[0]["lr"]
 
         self.evaluate_every = evaluate_every
         
@@ -506,12 +574,12 @@ class ProtonetTrainer:
                 )
 
             # Validation phase
-            if eval_dataloader and track_best_f1:
+            if eval_dataloader and (epoch % self.evaluate_every == 0 or epoch <= 20):
                 val_result = self.evaluate(
                     eval_dataloader,
                     f"{score_name_prefix}{val_or_test}",
                     epoch,
-                    log_metrics=True if (epoch % self.evaluate_every == 0 or epoch <= 20) and log_metrics else False,
+                    log_metrics=log_metrics,
                 )
                 all_f1_scores.append(val_result["f1"])
 
@@ -535,16 +603,16 @@ class ProtonetTrainer:
                     #     )
 
             self.current_epoch = epoch
-            es_batches = []
             train_iter = iter(train_dataloader)
-            # Get earlt stopping data
-            with no_grad():
-                for _ in range(n_es):
-                    X, y = next(train_iter)
-                    es_batches.append((X.clone().detach(), y.clone().detach()))
-
+            
             # Early stopping check
             if early_stopping_patience:# and val_dataloader:
+                es_batches = []
+                # Get early stopping data
+                with no_grad():
+                    for _ in range(n_es):
+                        X, y = next(train_iter)
+                        es_batches.append((X.clone().detach(), y.clone().detach()))
                 early_stopping_res = self.evaluate(
                     es_batches, f"{score_name_prefix}_es", epoch, log_metrics=False
                 )
@@ -612,9 +680,12 @@ class ProtonetTrainer:
                 
                 # Reset gradients for next accumulation
                 self.optimizer.zero_grad()
-            
+
             self.scheduler.step()
-            # self.scheduler.step(val_result["loss"])
+            # self.scheduler.step(current_metric)
+            # if self.last_lr != self.optimizer.param_groups[0]["lr"]:
+            #     self.last_lr = self.optimizer.param_groups[0]["lr"]
+            #     logger.info(f"Learning rate changed to {self.last_lr:.10f}")
 
         train_results = self.evaluate(
             train_dataloader, f"{score_name_prefix}train", epoch+1, log_metrics
@@ -688,10 +759,10 @@ class ProtonetTrainer:
                 # task_results[str(i)] = {}
                 X, y = X.to(self.device), y.to(self.device, dtype=torch.int64)
                 # task_results[str(i)]["n_samples"] = X.shape[0]
-                X_support = X[: self.train_k_shot * 2, :]
-                y_support = y[: self.train_k_shot * 2]
-                X_query = X[self.train_k_shot * 2 :, :]
-                y_query = y[self.train_k_shot * 2 :]
+                X_support = X[: self.eval_k_shot * 2, :] if not "train" in score_name_prefix and "_es" not in score_name_prefix else X[: self.train_k_shot * 2, :]
+                y_support = y[: self.eval_k_shot * 2] if not "train" in score_name_prefix and "_es" not in score_name_prefix else y[: self.train_k_shot * 2]
+                X_query = X[self.eval_k_shot * 2 :, :] if not "train" in score_name_prefix and "_es" not in score_name_prefix else X[self.train_k_shot * 2 :, :]
+                y_query = y[self.eval_k_shot * 2 :] if not "train" in score_name_prefix and "_es" not in score_name_prefix else y[self.train_k_shot * 2 :]
 
                 loss, y_hat, target_inds = self.protonet.loss(X_support, X_query, y_support, y_query, self.class_weights_loss_fn)
                 results["loss"] = loss.item()
@@ -710,6 +781,7 @@ class ProtonetTrainer:
                 f"{score_name_prefix}/precision": results["precision"],
                 f"{score_name_prefix}/recall": results["recall"],
                 f"{score_name_prefix}/roc_auc": results["roc_auc"],
+                f"{score_name_prefix}/average_precision": results["average_precision"],
                 "epoch": epoch,
             }
             wandb.log(eval_log)
@@ -724,6 +796,7 @@ class ProtonetTrainer:
                 + f"Precision = {results['precision']:.2f}, "
                 + f"Recall = {results['recall']:.2f}, "
                 + f"ROC-AUC = {results['roc_auc']:.2f}"
+                + f"average_precision = {results['average_precision']:.2f}"
             )
         self.protonet.train()
         if isinstance(dataloader, DataLoader):

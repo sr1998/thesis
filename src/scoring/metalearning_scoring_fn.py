@@ -4,6 +4,7 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     roc_auc_score,
+    average_precision_score,
 )
 from torch import Tensor, sigmoid
 
@@ -44,10 +45,16 @@ def compute_metrics(predictions: Tensor, targets: Tensor):
     except ValueError:
         roc_auc = float("nan")
 
+    try:
+        average_precision = average_precision_score(y_true, y_probs)
+    except ValueError:
+        average_precision = float("nan")
+
     return {
         "accuracy": accuracy,
         "f1": f1,
         "precision": precision,
         "recall": recall,
         "roc_auc": roc_auc,
+        "average_precision": average_precision,
     }

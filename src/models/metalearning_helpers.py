@@ -14,12 +14,22 @@ from src.preprocessing.functions import pandas_label_encoder
 from torch.utils.data import DataLoader
 import torch
 import torch.multiprocessing as mp
+# Must be set before any other multiprocessing code runs
+mp.set_start_method('spawn', force=True)
 
 import wandb
 from src.data.sun_et_al import BinaryFewShotBatchSampler, KShotBatchSampler, LabelOnlyDataset, MicrobiomeDataset
 from src.helper_function import column_rename_for_sun_et_al_metadata, df_str_for_loguru, encode_labels, make_data_balanced_per_study
 from src.models import maml_with_l2l, protonet, reptile_with_l2l
 from src.models.models import HighlyFlexibleModel
+
+
+def gpu_collate(batch, device="cuda"):
+    """Move batch to GPU after collation."""
+    samples, labels = zip(*batch)
+    samples = torch.stack(samples)
+    labels = torch.stack(labels)
+    return samples, labels
 
 
 def get_metalearning_model_from_trial(
@@ -40,9 +50,7 @@ def get_metalearning_model_from_trial(
     feature_reduction_n_components = trial_config["feature_reduction_n_components"]
     n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
     balanced_or_unbalanced = extra_configs["balanced_or_unbalanced"]
-
-    if mp.get_start_method(allow_none=True) is None:
-        mp.set_start_method('spawn', force=True)  # Most compatible option
+    device = extra_configs["device"]
 
     if feature_reduction_n_components != 0:
             if feature_reduction_alg == "PCA":
@@ -52,6 +60,7 @@ def get_metalearning_model_from_trial(
                 eval_data = pd.DataFrame(feature_reduction.transform(eval_data), index=eval_data.index)
             elif feature_reduction_alg == "PCA_feat_sel":
                 selected_feats, _, _ = select_features_by_pc_loadings(train_data, n_features=feature_reduction_n_components, n_components=500)
+                # selected_feats, _, _, _ = select_features_by_pc_loadings(train_data)
                 train_data = train_data[selected_feats]
                 eval_data = eval_data[selected_feats]
             else:
@@ -121,6 +130,32 @@ def get_metalearning_model_from_trial(
     # train_data = train_data.loc[train_metadata_new.index]
     # train_metadata = train_metadata_new
 
+
+    # filter data such that k_shot is possible
+    # grouped_train_metadata = train_metadata.groupby("project", sort=False)
+    # idx_to_remove = []
+    # for group_name, group in grouped_train_metadata:
+    #     grouped_by_label = group.groupby("label", sort=False)
+    #     for label_name, label_group in grouped_by_label:
+    #         if len(label_group) < train_k_shot * 2:
+    #             logger.warning(
+    #                 f"Group {group_name} with label {label_name} has only {len(label_group)} samples, which is less than k_shot ({train_k_shot})."
+    #             )
+    #             new_idx = train_metadata[train_metadata["project"] == group_name].index.tolist()
+    #             logger.warning(
+    #                 f"Removing {len(new_idx)} samples from group {group_name} with label {label_name}."
+    #             )
+    #             idx_to_remove.extend(new_idx)
+    #             break
+    # train_metadata = train_metadata.drop(index=idx_to_remove)
+    # train_data = train_data.drop(index=idx_to_remove)
+
+    # n unique groups
+    n_unique_groups = train_metadata["project"].nunique()
+    logger.info(
+        f"Number of unique groups in train metadata: {n_unique_groups}"
+    )
+
     if extra_configs["splitting_method"] == "normal":
         # order the metadata by the index of the data just to be sure
         train_metadata = train_metadata.loc[train_data.index]
@@ -129,29 +164,25 @@ def get_metalearning_model_from_trial(
         train_labels = encode_labels(LabelEncoder(), train_metadata["label"], extra_configs["positive_class_label"])
         eval_labels = encode_labels(LabelEncoder(), eval_metadata["label"], extra_configs["positive_class_label"])
 
-        train_dataset = LabelOnlyDataset(train_data.values, train_labels.values)
-        eval_dataset = LabelOnlyDataset(eval_data.values, eval_labels.values)
+        train_dataset = LabelOnlyDataset(train_data.values, train_labels.values, device=device)
+        eval_dataset = LabelOnlyDataset(eval_data.values, eval_labels.values, device=device)
         train_sampler = KShotBatchSampler(train_dataset, train_k_shot, include_query=True)
-        eval_sampler = KShotBatchSampler(eval_dataset, train_k_shot, include_query=True, query_size="rest", shuffle=False)
+        eval_sampler = KShotBatchSampler(eval_dataset, eval_k_shot, include_query=True, query_size="rest", shuffle=False)
         train_loader = DataLoader(
             train_dataset,
             batch_sampler=train_sampler,
-            num_workers=n_cpus,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=torch.cuda.is_available(),
+            num_workers=0
         )
         eval_loader = DataLoader(
             eval_dataset,
             batch_sampler=eval_sampler,
-            num_workers=n_cpus,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=torch.cuda.is_available(),
+            num_workers=0
         )
     elif extra_configs["splitting_method"] == "study_wise":
         # Create Datasets for DataLoader
-        train = MicrobiomeDataset(train_data, train_metadata, jitter_fraction=trial_config["jitter_fraction"], target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"]))
+        train = MicrobiomeDataset(train_data, train_metadata, jitter_fraction=trial_config["jitter_fraction"], target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"]), device=device)
         eval = MicrobiomeDataset(
-            eval_data, eval_metadata, preselected_support_set=eval_support_sets, jitter_fraction=0.0, target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"])
+            eval_data, eval_metadata, preselected_support_set=eval_support_sets, jitter_fraction=0.0, target_preprocessor=partial(pandas_label_encoder, positive_class_label=extra_configs["positive_class_label"]), device=device
         )
 
         # Create DataLoaders
@@ -161,17 +192,17 @@ def get_metalearning_model_from_trial(
             include_query=True if algorithm != "Reptile" else False,
             shuffle=True,
         )
-        train_loader = DataLoader(train, batch_sampler=sampler, num_workers=n_cpus, pin_memory=torch.cuda.is_available())
+        train_loader = DataLoader(train, batch_sampler=sampler, num_workers=4, pin_memory=torch.cuda.is_available(), persistent_workers=torch.cuda.is_available(), collate_fn=partial(gpu_collate, device=device))
 
         sampler = BinaryFewShotBatchSampler(
             eval,
-            train_k_shot,
+            eval_k_shot,
             include_query=True,
             shuffle=False,
             shuffle_once=False,
             training=False
         )
-        eval_loader = DataLoader(eval, batch_sampler=sampler, num_workers=n_cpus, pin_memory=torch.cuda.is_available())
+        eval_loader = DataLoader(eval, batch_sampler=sampler, num_workers=4, pin_memory=torch.cuda.is_available(), persistent_workers=torch.cuda.is_available(), collate_fn=partial(gpu_collate, device=device))
     else:
         raise ValueError(
             f"Unknown splitting method: {extra_configs['splitting_method']}"
@@ -195,19 +226,32 @@ def get_metalearning_model_from_trial(
         make_output_binary=False if algorithm=="ProtoNet" else True,
     ).to(extra_configs["device"])
 
+    train_labels_unordered = encode_labels(LabelEncoder(), train_metadata["label"], extra_configs["positive_class_label"])
+    # class_weights_dict = train_labels_unordered.value_counts(normalize=True).to_dict()
+    class_counts = train_labels_unordered.value_counts()
+    class_weights_dict = {cls: len(train_labels_unordered) / count 
+                     for cls, count in class_counts.items()}
+    class_weights = []
+    for i in range(len(class_weights_dict)):
+        class_weights.append(class_weights_dict[i])
     if algorithm == "MAML":
+        pos_class_weight = torch.tensor([class_weights[1] / class_weights[0]]).to(device)
         model = maml_with_l2l.MAML(
             model=model,
+            device=extra_configs["device"],
+            starting_lr=trial_config["model__starting_lr"],
+            scheduler_step=trial_config["model__scheduler_step"],
+            scheduler_gamma=trial_config["model__scheduler_gamma"],
+            weight_decay=trial_config["model__weight_decay"],
+            class_weights_loss_fn=class_weights,
             train_n_gradient_steps=extra_configs["n_gradient_steps"],
             eval_n_gradient_steps=extra_configs["n_gradient_steps"],
-            device=extra_configs["device"],
             inner_lr_range=trial_config["inner_lr_range"],
             inner_lr_reduction_factor=trial_config["inner_lr_reduction_factor"],
             outer_lr_range=trial_config["outer_lr_range"],
             train_k_shot=train_k_shot,
             eval_k_shot=eval_k_shot,
-            loss_fn=extra_configs["loss_fn"],
-            weight_decay=trial_config["model__weight_decay"],
+            loss_fn=extra_configs["loss_fn"](pos_weight=pos_class_weight) if extra_configs["loss_fn"] else None,
         )
 
     # Not converging at all with some tested hyperparams. Wrong implementation maybe. To be figured out when time allows.
@@ -233,12 +277,6 @@ def get_metalearning_model_from_trial(
             weight_decay=trial_config["model__weight_decay"],
         )
     elif algorithm == "ProtoNet":
-        train_labels_unordered = encode_labels(LabelEncoder(), train_metadata["label"], extra_configs["positive_class_label"])
-        class_weights_dict = train_labels_unordered.value_counts(normalize=True).to_dict()
-        class_weights = []
-        for i in range(len(class_weights_dict)):
-            class_weights.append(class_weights_dict[i])
-
         model = protonet.ProtonetTrainer(
             model=model,
             device=extra_configs["device"],

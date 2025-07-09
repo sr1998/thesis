@@ -1,6 +1,6 @@
 #!/bin/sh
 #SBATCH --job-name="baseline_metalearning_inspired"
-#SBATCH --partition=general,insy # Request partition.
+#SBATCH --partition=ewi-insy-prb,ewi-insy,general # Request partition.
 #SBATCH --qos=short                # This is how you specify QoS
 #SBATCH --time=4:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
