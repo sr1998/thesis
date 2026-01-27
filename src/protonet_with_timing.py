@@ -1,3 +1,7 @@
+import time
+import gc
+import functools
+
 import torch
 import torch.nn.functional as F
 from loguru import logger
@@ -44,6 +48,9 @@ def soft_dice_score(
     # Ensure target has same shape as output
     if target.dim() == 1:
         target = target.unsqueeze(1)
+
+    print(target)
+    print(output)
         
     assert output.size() == target.size()
     if dims is not None:
@@ -203,67 +210,6 @@ class FocalTverskyLoss(torch.nn.Module):
         return FocalTversky
 
 
-# class FocalLoss(torch.nn.Module):
-#     def __init__(self, alpha=None, gamma=2):
-#         super().__init__()
-#         self.alpha = alpha  # Can be tensor of per-class weights
-#         self.gamma = gamma
-    
-#     def forward(self, inputs, targets):
-#         ce_loss = F.cross_entropy(inputs, targets, reduction='none')
-#         pt = torch.exp(-ce_loss)
-        
-#         # Apply class-specific alpha if provided
-#         if self.alpha is not None:
-#             alpha_t = self.alpha[targets]
-#             focal_loss = alpha_t * (1-pt)**self.gamma * ce_loss
-#         else:
-#             focal_loss = (1-pt)**self.gamma * ce_loss
-            
-#         return focal_loss.mean()
-    
-    
-class FocalLoss(torch.nn.Module):
-    def __init__(self, alpha=1, gamma=2):
-        super().__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-    
-    def forward(self, inputs, targets):
-        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
-        pt = torch.exp(-ce_loss)
-        focal_loss = self.alpha * (1-pt)**self.gamma * ce_loss
-        return focal_loss.mean()
-
-
-class sigmoidF1(nn.Module):
-    """from https://github.com/gabriben/metrics-as-losses/blob/main/VLAP/pytorchLosses.py"""
-    def __init__(self, S = -1, E = 0):
-        super(sigmoidF1, self).__init__()
-        self.S = S
-        self.E = E
-
-    @torch.cuda.amp.autocast()
-    def forward(self, y_hat, y):
-        
-        y_hat = torch.sigmoid(y_hat)
-
-        b = torch.tensor(self.S)
-        c = torch.tensor(self.E)
-
-        sig = 1 / (1 + torch.exp(b * (y_hat + c)))
-
-        tp = torch.sum(sig * y, dim=0)
-        fp = torch.sum(sig * (1 - y), dim=0)
-        fn = torch.sum((1 - sig) * y, dim=0)
-
-        sigmoid_f1 = 2*tp / (2*tp + fn + fp + 1e-16)
-        cost = 1 - sigmoid_f1
-        macroCost = torch.mean(cost)
-
-        return macroCost
-    
-
 def euclidean_dist(x, y):
     # # Code taken from https://github.com/jakesnell/prototypical-networks/blob/master/protonets/models/few_shot.py
     # x: N x D
@@ -333,8 +279,6 @@ class ProtoNet(nn.Module):
         self.encoder = encoder
         self.dice_loss = DiceLoss(mode="binary")
         self.focal_tversky_loss = FocalTverskyLoss()
-        self.focal_loss = FocalLoss()
-        self.sigmoid_f1 = sigmoidF1()
 
     @staticmethod
     def calculate_prototypes_robust(features, targets, alpha=0.9):
@@ -416,7 +360,7 @@ class ProtoNet(nn.Module):
         preds = F.log_softmax(-dist, dim=1)
         labels = (classes[None, :] == targets[:, None]).long().argmax(dim=-1)
         # acc = (preds.argmax(dim=1) == labels).float().mean()
-        return preds, labels, dist
+        return preds, labels
     
     def classify_feats_with_cosine_similarity(self, prototypes, classes, feats, targets):
         # Use cosine similarity instead of Euclidean distance
@@ -431,24 +375,18 @@ class ProtoNet(nn.Module):
         preds = F.log_softmax(similarity, dim=1)
         labels = (classes[None, :] == targets[:, None]).long().argmax(dim=-1)
     
-        return preds, labels, None
+        return preds, labels
 
     def loss(self, X_support, X_query, y_support, y_query, class_weights_loss_fn):
         # Determine training loss for a given support and query set
         support_feats = self.encoder(X_support)
         query_feats = self.encoder(X_query)
         prototypes, classes = ProtoNet.calculate_prototypes(support_feats, y_support)
-        preds, labels, dist = self.classify_feats(prototypes, classes, query_feats, y_query)
+        preds, labels = self.classify_feats(prototypes, classes, query_feats, y_query)
         loss = F.cross_entropy(preds, labels, weight=class_weights_loss_fn)
         # loss = self.dice_loss(preds, labels)
         # loss = self.focal_tversky_loss(preds, labels)
         # loss = F.nll_loss(preds, labels)  # Negative log likelihood loss
-        # loss = self.focal_loss(preds, labels)
-
-        # Sigmoid F1 loss
-        # probs = F.softmax(-dist, dim=1)  # Convert distances to probabilities
-        # y_one_hot = F.one_hot(labels, num_classes=len(classes)).float()
-        # loss = self.sigmoid_f1(probs, y_one_hot)
         return loss, preds.argmax(dim=1), labels
 
 
@@ -469,6 +407,8 @@ class ProtonetTrainer:
         class_weights_loss_fn = (.5, .5),
         evaluate_every: int = 10,
     ):
+        # Store model and configuration
+        self.protonet = ProtoNet(model).to(device)
 
         # Store parameters
         self.device = device
@@ -479,9 +419,6 @@ class ProtonetTrainer:
         self.eval_k_shot = eval_k_shot or train_k_shot
         self.weight_decay = weight_decay
         self.class_weights_loss_fn = torch.tensor(class_weights_loss_fn).to(device)
-
-        # Store model and configuration
-        self.protonet = ProtoNet(model).to(device)
 
         # Training state
         self.optimizer = None
@@ -497,8 +434,7 @@ class ProtonetTrainer:
             step_size=self.scheduler_step,
             gamma=self.scheduler_gamma,
         )
-        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=self.scheduler_gamma, patience=self.scheduler_step)
-        # self.last_lr = self.optimizer.param_groups[0]["lr"]
+        # self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=self.scheduler_gamma)
 
         self.evaluate_every = evaluate_every
         
@@ -533,7 +469,6 @@ class ProtonetTrainer:
         *,
         train_dataloader: DataLoader,
         n_epochs: int,
-        val_dataloader: DataLoader = None,
         eval_dataloader: DataLoader = None,
         val_or_test: str = "val",
         early_stopping_patience: int = None,
@@ -548,197 +483,171 @@ class ProtonetTrainer:
         accumulation_steps: int = 50,
         **kwargs,  # to sbe ignored
     ):
-        self.protonet.train()
-        score_name_prefix = score_name_prefix + "." if score_name_prefix else ""
-        best_metric_value = (
-            float("inf") if "loss" in early_stopping_metric else -float("inf")
-        )
-
-        patience_counter = 0
-        n_es = max(1, int(len(train_dataloader) * early_stopping_fraction))
-
-
-        # Best F1 tracking
-        best_f1 = -float("inf")
-        best_f1_epoch = 0
-        best_model_state = None
-        all_f1_scores = []
-
-        epoch = 0
-        for epoch in range(n_epochs):
-            if epoch % self.evaluate_every == 0:
-                logger.info(f"Epoch {epoch+1}/{n_epochs}")
-            # log every {self.evaluate_every} epochs, overwriting previous log
-            if log_metrics and (epoch % self.evaluate_every == 0 or epoch <= 20):
-                train_results = self.evaluate(
-                    train_dataloader, f"{score_name_prefix}train", epoch, log_metrics
+        with FitBenchmark(val_or_test) as benchmark:
+            self.protonet.train()
+            # Store original values
+            original_evaluate = self.evaluate
+            
+            # Override evaluate method to benchmark it
+            def benchmarked_evaluate(*args, **kwargs):
+                with benchmark.time_operation('evaluation'):
+                    benchmark.increment_counter('evaluations')
+                    return original_evaluate(*args, **kwargs)
+                    
+            self.evaluate = benchmarked_evaluate
+            
+            try:
+                score_name_prefix = score_name_prefix + "." if score_name_prefix else ""
+                best_metric_value = (
+                    float("inf") if "loss" in early_stopping_metric else -float("inf")
                 )
 
-            # Validation phase
-            if eval_dataloader and (epoch % self.evaluate_every == 0 or epoch <= 20):
+                patience_counter = 0
+                n_es = max(1, int(len(train_dataloader) * early_stopping_fraction))
+
+                # Best F1 tracking
+                best_f1 = -float("inf")
+                best_f1_epoch = 0
+                best_model_state = None
+                all_f1_scores = []
+
+                for epoch in range(n_epochs):
+                    benchmark.start_epoch()
+                    benchmark.increment_counter('epochs')
+                    
+                    with benchmark.time_operation('epoch_setup'):
+                        logger.info(f"Epoch {epoch+1}/{n_epochs}")
+                        
+                        if log_metrics and (epoch % self.evaluate_every == 0 or epoch <= 20):
+                            train_results = self.evaluate(
+                                train_dataloader, f"{score_name_prefix}train", epoch, log_metrics
+                            )
+
+                        # Validation phase
+                        if eval_dataloader and track_best_f1:
+                            val_result = self.evaluate(
+                                eval_dataloader,
+                                f"{score_name_prefix}{val_or_test}",
+                                epoch,
+                                log_metrics=True if (epoch % self.evaluate_every == 0 or epoch <= 20) and log_metrics else False,
+                            )
+                            all_f1_scores.append(val_result["f1"])
+
+                            # Track best F1 score
+                            if track_best_f1 and "f1" in val_result and val_result["f1"] > best_f1 and epoch > 0.1*n_epochs:
+                                best_f1 = val_result["f1"]
+                                best_f1_epoch = epoch
+
+                    self.current_epoch = epoch
+                    es_batches = []
+                    
+                    # Early stopping data collection
+                    with benchmark.time_operation('data_loading'):
+                        train_iter = iter(train_dataloader)
+                        with torch.no_grad():
+                            for _ in range(n_es):
+                                X, y = next(train_iter)
+                                es_batches.append((X.clone().detach(), y.clone().detach()))
+
+                    # Early stopping check
+                    if early_stopping_patience:
+                        early_stopping_res = self.evaluate(
+                            es_batches, f"{score_name_prefix}_es", epoch, log_metrics=False
+                        )
+                        current_metric = early_stopping_res[early_stopping_metric]
+
+                        improved = (
+                            early_stopping_metric == "loss"
+                            and current_metric < best_metric_value
+                        ) or (
+                            early_stopping_metric != "loss"
+                            and current_metric > best_metric_value
+                        )
+
+                        if improved:
+                            best_metric_value = current_metric
+                            patience_counter = 0
+                        else:
+                            patience_counter += 1
+
+                        if patience_counter >= early_stopping_patience:
+                            logger.info(f"Early stopping triggered after {epoch+1} epochs")
+                            break
+
+                    self.optimizer.zero_grad()
+                    
+                    for X, y in train_iter:
+                        benchmark.increment_counter('iterations')
+                        
+                        with benchmark.time_operation('data_loading'):
+                            X, y = X.to(self.device), y.to(self.device, dtype=torch.int64)
+                            X_support = X[: self.train_k_shot * 2, :]
+                            y_support = y[: self.train_k_shot * 2]
+                            X_query = X[self.train_k_shot * 2 :, :]
+                            y_query = y[self.train_k_shot * 2 :]
+
+                        with benchmark.time_operation('forward_pass'):
+                            loss, y_hat, target_inds = self.protonet.loss(
+                                X_support, X_query, y_support, y_query, self.class_weights_loss_fn
+                            )
+
+                        with benchmark.time_operation('backward_pass'):
+                            loss.backward()
+                        
+                        with benchmark.time_operation('optimization'):
+                            self.optimizer.step()
+                            if log_gradients:
+                                self._log_gradients(epoch, f"{score_name_prefix}train")
+                            self.optimizer.zero_grad()
+
+                    self.scheduler.step()
+                    epoch_time = benchmark.end_epoch()
+                    benchmark.print_epoch_report(epoch)
+                    
+                    # Option to manually break - print message
+                    print("\nTo stop training early, press Ctrl+C now...")
+                    try:
+                        # Small sleep to give chance to interrupt
+                        time.sleep(1)
+                    except KeyboardInterrupt:
+                        print("\n🛑 Training manually interrupted based on benchmark data")
+                        break
+
+                # Final evaluation
+                train_results = self.evaluate(
+                    train_dataloader, f"{score_name_prefix}train", epoch+1, log_metrics
+                )
+
                 val_result = self.evaluate(
                     eval_dataloader,
                     f"{score_name_prefix}{val_or_test}",
-                    epoch,
+                    epoch+1,
                     log_metrics=log_metrics,
                 )
+
                 all_f1_scores.append(val_result["f1"])
 
-                # Track best F1 score
-                if track_best_f1 and "f1" in val_result and val_result["f1"] > best_f1 and epoch > 0.1*n_epochs:
-                    best_f1 = val_result["f1"]
-                    best_f1_epoch = epoch
-
-                    # Save model state with best F1
-                    # if save_best_model_path:
-                    #     best_model_state = {
-                    #         "state_dict": self.protonet.state_dict(),
-                    #         "epoch": epoch,
-                    #         "f1_score": best_f1,
-                    #     }
-                    #     torch_save(
-                    #         best_model_state, str(save_best_model_path) + ".best_f1"
-                    #     )
-                    #     logger.info(
-                    #         f"Saved new best F1 model with F1 = {best_f1:.4f} at epoch {epoch+1}"
-                    #     )
-
-            self.current_epoch = epoch
-            train_iter = iter(train_dataloader)
-            
-            # Early stopping check
-            if early_stopping_patience:# and val_dataloader:
-                es_batches = []
-                # Get early stopping data
-                with no_grad():
-                    for _ in range(n_es):
-                        X, y = next(train_iter)
-                        es_batches.append((X.clone().detach(), y.clone().detach()))
-                early_stopping_res = self.evaluate(
-                    es_batches, f"{score_name_prefix}_es", epoch, log_metrics=False
-                )
-                current_metric = early_stopping_res[early_stopping_metric]
-
-                improved = (
-                    early_stopping_metric == "loss"
-                    and current_metric < best_metric_value
-                ) or (
-                    early_stopping_metric != "loss"
-                    and current_metric > best_metric_value
-                )
-
-                if improved:
-                    best_metric_value = current_metric
-                    patience_counter = 0
-
-                    # Save the best model
-                    # if save_best_model_path:
-                    #     torch_save(self, save_best_model_path)
-                    #     logger.info(
-                    #         f"Saved new best model with {early_stopping_metric} = {current_metric:.4f}"
-                    #     )
-                else:
-                    patience_counter += 1
-
-                if patience_counter >= early_stopping_patience:
-                    logger.info(f"Early stopping triggered after {epoch+1} epochs")
-                    break
-
-            self.optimizer.zero_grad()
-            # train_iter = iter(train_dataloader)
-            for X, y in train_iter:
-                X, y = X.to(self.device), y.to(self.device, dtype=torch.int64)
-                X_support = X[: self.train_k_shot * 2, :]
-                y_support = y[: self.train_k_shot * 2]
-                X_query = X[self.train_k_shot * 2 :, :]
-                y_query = y[self.train_k_shot * 2 :]
-
-                loss, y_hat, target_inds = self.protonet.loss(X_support, X_query, y_support, y_query, self.class_weights_loss_fn)
-
-                # # Normalize loss by accumulation steps to maintain the same scale
-                # normalized_loss = loss / accumulation_steps
-                # normalized_loss.backward()
-                # torch.nn.utils.clip_grad_norm_(self.protonet.parameters(), max_norm=1.0)
-
-                loss.backward()
-                self.optimizer.step()
-
-                # i += 1
-                # if (i + 1) % accumulation_steps == 0 or i == len(train_dataloader) - 1:
-                #     # Log gradients if enabled
-                #     if log_gradients:
-                #         self._log_gradients(epoch, f"{score_name_prefix}train")
+                # Include best F1 information
+                if track_best_f1:
+                    val_result["best_f1"] = best_f1
+                    val_result["best_f1_epoch"] = best_f1_epoch
                     
-                #     # Perform optimization step with accumulated gradients
-                #     self.optimizer.step()
+                    if log_metrics:
+                        import wandb
+                        wandb.log(
+                            {
+                                f"{score_name_prefix}{val_or_test}/best_f1": best_f1,
+                                f"{score_name_prefix}{val_or_test}/best_f1_epoch": best_f1_epoch,
+                                "epoch": n_epochs,
+                            }
+                        )
 
-                #     # Reset gradients for next accumulation
-                #     self.optimizer.zero_grad()
-                    
-                # Log gradients if enabled
-                if log_gradients:
-                    self._log_gradients(epoch, f"{score_name_prefix}train")
+                val_result["averaged_f1_score"] = sum(all_f1_scores[-10:]) / 10
+                return train_results, val_result
                 
-                # Reset gradients for next accumulation
-                self.optimizer.zero_grad()
-
-            self.scheduler.step()
-            # self.scheduler.step(current_metric)
-            # if self.last_lr != self.optimizer.param_groups[0]["lr"]:
-            #     self.last_lr = self.optimizer.param_groups[0]["lr"]
-            #     logger.info(f"Learning rate changed to {self.last_lr:.10f}")
-
-        if epoch:
-            train_results = self.evaluate(
-                train_dataloader, f"{score_name_prefix}train", epoch+1, log_metrics
-            )
-
-            # Validation phase
-            val_result = self.evaluate(
-                eval_dataloader,
-                f"{score_name_prefix}{val_or_test}",
-                epoch+1,
-                log_metrics=log_metrics,
-            )
-
-            all_f1_scores.append(val_result["f1"])
-
-            # Include best F1 information in results WITHOUT overriding original f1
-            if track_best_f1:
-                val_result["best_f1"] = best_f1
-                val_result["best_f1_epoch"] = best_f1_epoch
-
-                # Log the best F1 separately
-                if log_metrics:
-                    import wandb
-
-                    wandb.log(
-                        {
-                            f"{score_name_prefix}{val_or_test}/best_f1": best_f1,
-                            f"{score_name_prefix}{val_or_test}/best_f1_epoch": best_f1_epoch,
-                            "epoch": n_epochs,  # Log at final epoch
-                        }
-                    )
-        else:
-            train_results = {}
-            val_result = {}
-        # Load best F1 model if requested (for future use)
-        # if (
-        #     track_best_f1
-        #     and best_model_state
-        #     and save_best_model_path
-        #     and load_best_model
-        # ):
-        #     best_model_checkpoint = torch_load(str(save_best_model_path) + ".best_f1")
-        #     self.protonet.load_state_dict(best_model_checkpoint["state_dict"])
-        #     self.current_epoch = best_model_checkpoint["epoch"]
-        #     best_f1 = best_model_checkpoint["f1_score"]
-        #     logger.info(
-        #         f"Loaded best F1 model with F1 = {best_f1:.4f} from epoch {best_f1_epoch+1}"
-        #     )
-
-            val_result["averaged_f1_score"] = sum(all_f1_scores[-10:]) / 10
-        return train_results, val_result
+            finally:
+                # Restore original evaluate method
+                self.evaluate = original_evaluate
 
     def evaluate(
         self,
@@ -763,10 +672,10 @@ class ProtonetTrainer:
                 # task_results[str(i)] = {}
                 X, y = X.to(self.device), y.to(self.device, dtype=torch.int64)
                 # task_results[str(i)]["n_samples"] = X.shape[0]
-                X_support = X[: self.eval_k_shot * 2, :] if not "train" in score_name_prefix and "_es" not in score_name_prefix else X[: self.train_k_shot * 2, :]
-                y_support = y[: self.eval_k_shot * 2] if not "train" in score_name_prefix and "_es" not in score_name_prefix else y[: self.train_k_shot * 2]
-                X_query = X[self.eval_k_shot * 2 :, :] if not "train" in score_name_prefix and "_es" not in score_name_prefix else X[self.train_k_shot * 2 :, :]
-                y_query = y[self.eval_k_shot * 2 :] if not "train" in score_name_prefix and "_es" not in score_name_prefix else y[self.train_k_shot * 2 :]
+                X_support = X[: self.train_k_shot * 2, :]
+                y_support = y[: self.train_k_shot * 2]
+                X_query = X[self.train_k_shot * 2 :, :]
+                y_query = y[self.train_k_shot * 2 :]
 
                 loss, y_hat, target_inds = self.protonet.loss(X_support, X_query, y_support, y_query, self.class_weights_loss_fn)
                 results["loss"] = loss.item()
@@ -785,7 +694,6 @@ class ProtonetTrainer:
                 f"{score_name_prefix}/precision": results["precision"],
                 f"{score_name_prefix}/recall": results["recall"],
                 f"{score_name_prefix}/roc_auc": results["roc_auc"],
-                f"{score_name_prefix}/average_precision": results["average_precision"],
                 "epoch": epoch,
             }
             wandb.log(eval_log)
@@ -800,7 +708,6 @@ class ProtonetTrainer:
                 + f"Precision = {results['precision']:.2f}, "
                 + f"Recall = {results['recall']:.2f}, "
                 + f"ROC-AUC = {results['roc_auc']:.2f}"
-                + f"average_precision = {results['average_precision']:.2f}"
             )
         self.protonet.train()
         if isinstance(dataloader, DataLoader):
@@ -809,3 +716,128 @@ class ProtonetTrainer:
             if hasattr(dataloader.batch_sampler, "use_all_remaining"):
                 dataloader.batch_sampler.use_all_remaining = dataloader_original_use_all_remaining_state
         return results
+
+
+class FitBenchmark:
+    def __init__(self, context_name="Default"):
+        self.timings = {
+            'total': 0,
+            'epoch_setup': 0,
+            'data_loading': 0,
+            'forward_pass': 0,
+            'backward_pass': 0, 
+            'optimization': 0,
+            'evaluation': 0
+        }
+        self.counters = {
+            'epochs': 0,
+            'iterations': 0,
+            'evaluations': 0
+        }
+        self.context_name = context_name
+        self.start_time = None
+        # Add epoch tracking
+        self.epoch_times = []
+        self.epoch_start_time = None
+        self.last_report_time = None
+        self.report_interval = 1  # Report after each epoch by default
+    
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.timings['total'] = time.time() - self.start_time
+        self._print_report()
+        gc.collect()  # Force garbage collection
+        
+    def time_operation(self, operation_name):
+        class OperationTimer:
+            def __init__(self, benchmark, op_name):
+                self.benchmark = benchmark
+                self.op_name = op_name
+                
+            def __enter__(self):
+                self.start_time = time.time()
+                return self
+                
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                duration = time.time() - self.start_time
+                if self.op_name in self.benchmark.timings:
+                    self.benchmark.timings[self.op_name] += duration
+                else:
+                    self.benchmark.timings[self.op_name] = duration
+                
+        return OperationTimer(self, operation_name)
+    
+    def increment_counter(self, counter_name):
+        if counter_name in self.counters:
+            self.counters[counter_name] += 1
+        else:
+            self.counters[counter_name] = 1
+            
+    def _print_report(self):
+        print(f"\n===== {self.context_name} BENCHMARK RESULTS =====")
+        print(f"Total execution time: {self.timings['total']:.2f}s")
+        
+        for counter, count in self.counters.items():
+            print(f"{counter.capitalize()}: {count}")
+            
+        print("\nTime breakdown:")
+        for operation, duration in self.timings.items():
+            if operation != 'total':
+                percentage = (duration / self.timings['total']) * 100
+                print(f"  - {operation.replace('_', ' ').capitalize()}: {duration:.2f}s ({percentage:.1f}%)")
+        
+        print("=======================================\n")
+
+    def start_epoch(self):
+        """Mark the start of a new epoch for timing purposes"""
+        self.epoch_start_time = time.time()
+    
+    def end_epoch(self):
+        """Mark the end of an epoch and record its duration"""
+        if self.epoch_start_time is not None:
+            epoch_duration = time.time() - self.epoch_start_time
+            self.epoch_times.append(epoch_duration)
+            self.epoch_start_time = None
+            return epoch_duration
+        return None
+    
+    def print_epoch_report(self, epoch):
+        """Print timing report for a specific epoch"""
+        if epoch < len(self.epoch_times):
+            print(f"\n----- Epoch {epoch+1} Timing -----")
+            print(f"Duration: {self.epoch_times[epoch]:.2f}s")
+            
+            # Calculate average and trend
+            if len(self.epoch_times) > 1:
+                avg_time = sum(self.epoch_times) / len(self.epoch_times)
+                print(f"Average epoch time: {avg_time:.2f}s")
+                
+                # Show trend
+                if len(self.epoch_times) >= 3:
+                    recent_avg = sum(self.epoch_times[-3:]) / 3
+                    if recent_avg > avg_time * 1.1:
+                        print("⚠️ WARNING: Recent epochs are getting slower")
+                    
+            # Calculate estimated remaining time
+            if 'epochs' in self.counters and self.counters['epochs'] > 0:
+                remaining = self.counters['epochs'] - epoch - 1
+                if remaining > 0:
+                    est_remaining_time = remaining * self.epoch_times[epoch]
+                    print(f"Estimated remaining time: {est_remaining_time:.2f}s ({est_remaining_time/60:.1f} min)")
+            
+            print("---------------------------")
+
+def benchmark_decorator(name="Function"):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            end_time = time.time()
+            print(f"{name} executed in {end_time - start_time:.2f} seconds")
+            return result
+        return wrapper
+    return decorator

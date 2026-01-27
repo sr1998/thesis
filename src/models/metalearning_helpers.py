@@ -9,7 +9,7 @@ from loguru import logger
 from sklearn.calibration import LabelEncoder
 from sklearn.preprocessing import Normalizer
 from sklearn.decomposition import FastICA, PCA
-from src.data.helper_functions import select_features_by_pc_loadings
+# from src.data.helper_functions import select_features_by_pc_loadings
 from src.preprocessing.functions import pandas_label_encoder
 from torch.utils.data import DataLoader
 import torch
@@ -51,6 +51,9 @@ def get_metalearning_model_from_trial(
     n_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
     balanced_or_unbalanced = extra_configs["balanced_or_unbalanced"]
     device = extra_configs["device"]
+
+    if mp.get_start_method(allow_none=True) is None:
+        mp.set_start_method('spawn', force=True)  # Most compatible option
 
     if feature_reduction_n_components != 0:
             if feature_reduction_alg == "PCA":
@@ -130,25 +133,24 @@ def get_metalearning_model_from_trial(
     # train_data = train_data.loc[train_metadata_new.index]
     # train_metadata = train_metadata_new
 
-
     # filter data such that k_shot is possible
-    # grouped_train_metadata = train_metadata.groupby("project", sort=False)
-    # idx_to_remove = []
-    # for group_name, group in grouped_train_metadata:
-    #     grouped_by_label = group.groupby("label", sort=False)
-    #     for label_name, label_group in grouped_by_label:
-    #         if len(label_group) < train_k_shot * 2:
-    #             logger.warning(
-    #                 f"Group {group_name} with label {label_name} has only {len(label_group)} samples, which is less than k_shot ({train_k_shot})."
-    #             )
-    #             new_idx = train_metadata[train_metadata["project"] == group_name].index.tolist()
-    #             logger.warning(
-    #                 f"Removing {len(new_idx)} samples from group {group_name} with label {label_name}."
-    #             )
-    #             idx_to_remove.extend(new_idx)
-    #             break
-    # train_metadata = train_metadata.drop(index=idx_to_remove)
-    # train_data = train_data.drop(index=idx_to_remove)
+    grouped_train_metadata = train_metadata.groupby("project", sort=False)
+    idx_to_remove = []
+    for group_name, group in grouped_train_metadata:
+        grouped_by_label = group.groupby("label", sort=False)
+        for label_name, label_group in grouped_by_label:
+            if len(label_group) < train_k_shot * 2:
+                logger.warning(
+                    f"Group {group_name} with label {label_name} has only {len(label_group)} samples, which is less than k_shot ({train_k_shot})."
+                )
+                new_idx = train_metadata[train_metadata["project"] == group_name].index.tolist()
+                logger.warning(
+                    f"Removing {len(new_idx)} samples from group {group_name} with label {label_name}."
+                )
+                idx_to_remove.extend(new_idx)
+                break
+    train_metadata = train_metadata.drop(index=idx_to_remove)
+    train_data = train_data.drop(index=idx_to_remove)
 
     # n unique groups
     n_unique_groups = train_metadata["project"].nunique()
@@ -251,7 +253,8 @@ def get_metalearning_model_from_trial(
             outer_lr_range=trial_config["outer_lr_range"],
             train_k_shot=train_k_shot,
             eval_k_shot=eval_k_shot,
-            loss_fn=extra_configs["loss_fn"](pos_weight=pos_class_weight) if extra_configs["loss_fn"] else None,
+            # loss_fn=extra_configs["loss_fn"](pos_weight=pos_class_weight) if extra_configs["loss_fn"] else None,
+            loss_fn=extra_configs["loss_fn"](torch.tensor(class_weights) or [.5, .5]) if extra_configs["loss_fn"] else None,
         )
 
     # Not converging at all with some tested hyperparams. Wrong implementation maybe. To be figured out when time allows.

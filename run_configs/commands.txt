@@ -1,1 +1,12 @@
 srun apptainer exec -B $HOME:$HOME $APPTAINER_ROOT/$APPTAINER_NAME MGYS00005285
+
+python -m src.main_metalearning --datasource "sun et al" --config_script "run_configs.maml" --algorithm "MAML"
+--abundance_file "data/sun_et_al/mpa4_species_profile_preprocessed.csv" --metadata_file "data/sun_et_al/sample_group_species_preprocessed2.csv" \
+--test_study "HanL_2021" --balanced_or_unbalanced "balanced" --n_gradient_steps 2 --n_parallel_tasks 5 --n_epochs 10 --train_k_shot 10
+
+
+
+---
+sudo ~/apptainer_installation/bin/apptainer build extended_image.sif extend_image.def
+
+scp extended_image.sif sramezani@login.daic.tudelft.nl:/tudelft.net/staff-umbrella/abeellabstudents/sramezani/new_apptainer

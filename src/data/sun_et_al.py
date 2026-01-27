@@ -69,7 +69,7 @@ class MicrobiomeDataset(Dataset):
 
         if preprocessor is not None:
             self.samples = preprocessor(self.samples)
-        self.samples = tensor(self.samples.to_numpy(), dtype=float32)
+        self.samples = tensor(self.samples.to_numpy(), dtype=float32).to(device)
 
         # we can drop here, as we already selected the indices desired
         label_and_project = label_and_project.reset_index(drop=True)
@@ -87,7 +87,7 @@ class MicrobiomeDataset(Dataset):
         }
         # labels, sorted as samples
         self.projects = label_and_project["project"].tolist()
-        self.labels = tensor(label_and_project["label"].to_numpy(), dtype=float32)
+        self.labels = tensor(label_and_project["label"].to_numpy(), dtype=float32).to(device)
 
         self.jitter_fraction = jitter_fraction
         if self.jitter_fraction:

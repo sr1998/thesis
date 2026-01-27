@@ -427,12 +427,21 @@ class MAML:
             # Add average F1 score over last 10 epochs
             val_result["averaged_f1_score"] = sum(all_f1_scores[-10:]) / min(10, len(all_f1_scores))
             
-            # Load best model if requested
-            if load_best_model and track_best_f1 and best_model_state and save_best_model_path:
-                best_model_checkpoint = torch_load(str(save_best_model_path) + ".best_f1")
-                self.model.load_state_dict(best_model_checkpoint['model_state_dict'])
-                self.maml.load_state_dict(best_model_checkpoint['maml_state_dict'])
-                logger.info(f"Loaded best F1 model from epoch {best_f1_epoch+1}")
+            # Log the best F1 separately
+            if log_metrics:
+                import wandb
+                wandb.log({
+                    f"{score_name_prefix}{val_or_test}/best_f1": best_f1,
+                    f"{score_name_prefix}{val_or_test}/best_f1_epoch": best_f1_epoch,
+                    "epoch": n_epochs  # Log at final epoch
+                })
+
+        # Load best F1 model if requested (for future use)
+        if track_best_f1 and best_model_state and save_best_model_path and load_best_model:
+            best_model_checkpoint = torch_load(str(save_best_model_path) + ".best_f1")
+            self.model.load_state_dict(best_model_checkpoint['model_state_dict'])
+            self.maml.load_state_dict(best_model_checkpoint['maml_state_dict'])
+            logger.info(f"Loaded best F1 model from epoch {best_f1_epoch+1}")
 
         return train_results, val_result
     def evaluate(
@@ -441,7 +450,6 @@ class MAML:
         score_name_prefix: str,
         epoch: int = None,
         log_metrics: bool = True,
-        log_step: int = None,
     ):
         """Evaluate the model on the entire validation dataset"""
         self.maml.eval()
@@ -498,4 +506,8 @@ class MAML:
                 dataloader.batch_sampler.use_all_remaining = dataloader_states["use_all_remaining"]
         
         self.maml.train()
+        if hasattr(dataloader.dataset, "training"):
+            dataloader.dataset.training = dataloader_original_training_state
+        if hasattr(dataloader.batch_sampler, "use_all_remaining"):
+            dataloader.batch_sampler.use_all_remaining = dataloader_original_use_all_remaining_state
         return results

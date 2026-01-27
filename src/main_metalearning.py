@@ -40,8 +40,6 @@ from src.global_vars import BASE_DATA_DIR, RANDOM_SEED
 
 
 def main(
-    # model_script: str,                    # optimization
-    # model_name: str,                      # optimization
     datasource: str,
     algorithm: str,
     abundance_file: str | Path,
@@ -57,7 +55,7 @@ def main(
     n_parallel_tasks: int,  # TODO Could be a hyperparam
     train_k_shot: int,
     splitting_method: str = "study_wise",  # "normal" or "study_wise"
-    eval_k_shot: int = None,              # skip
+    eval_k_shot: int = None,
     # n_components_reduction_factor: int = 0,  # 0 or 1 for no PCA at all   # skip
     # use_cached_pca: bool = False,         # skip
     # do_normalization_before_scaling: bool = True, # optimization
@@ -749,19 +747,40 @@ def main(
 
 
 if __name__ == "__main__":
-    fire.Fire(main)
+    # fire.Fire(main)
 
-    # main(
-    #     datasource="sun et al",
-    #     algorithm="MAML",
-    #     abundance_file="mpa4_species_profile_preprocessed.csv",
-    #     metadata_file="sample_group_species_preprocessed.csv",
-    #     test_study="JieZ_2017",
-    #     balanced_or_unbalanced="unbalanced",
-    #     n_gradient_steps=5,
-    #     n_parallel_tasks=5,
-    #     train_k_shot=10,
-    #     use_wandb=True,
-    #     resume=False,
-    #     positive_class_label="Disease",
-    # )
+    # --datasource="sun et al" \
+    # --algorithm="${ALGORITHM}" \
+    # --balanced_or_unbalanced "$BALANCED_OR_UNBALANCED" \
+    # --test_study="$STUDY" \
+    # --n_gradient_steps 5 \
+    # --n_parallel_tasks 5 \
+    # --train_k_shot 10 \
+    # --positive_class_label "Disease" \
+    # --splitting_method="${SPLITTING_METHOD}" \
+    # --abundance_file="stunt/stunt_mpa4_species_profile_preprocessed.csv" \
+    # --metadata_file="stunt/stunt_sample_group_species_preprocessed.csv" \
+    # --project="stunt_small" \
+    # --extra_str_indicator="stunt_larger_es_fraction" \
+    # --new_primary=True
+
+    main(
+        datasource="sun et al",
+        algorithm="ProtoNet",
+        abundance_file="mpa4_species_profile_preprocessed.csv",
+        metadata_file="sample_group_species_preprocessed.csv",
+        test_study="ZhongH_2019",
+        balanced_or_unbalanced="unbalanced",
+        n_gradient_steps=5,
+        n_parallel_tasks=5,
+        train_k_shot=10,
+        use_wandb=False,
+        resume=False,
+        positive_class_label="Disease",
+        splitting_method="study_wise",
+        new_primary=True,
+        track_best_f1=True,
+        feature_reduction_alg="PCA",
+    )
+
+

@@ -122,6 +122,7 @@ def get_setup(model_name, with_oversampling=True):
         "RandomForestClassifier": partial(sss.rf_search_space_sampler, best_fit_scorer=best_fit_scorer),
         "XGBoost": sss.xgboost_search_space_sampler,
         "BalancedRandomForestClassifier": partial(sss.rf_search_space_sampler, best_fit_scorer=best_fit_scorer),
+        "DutchDraw": None,
     }[model_name]
 
     return {

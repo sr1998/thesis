@@ -18,12 +18,12 @@ def metalearning_binary_target_changer(labels: Tensor) -> Tensor:
     labels = (labels + to_change) % 2
     return labels
 
-def select_features_by_pc_loadings(X, n_features=500, n_components=1000, weighting='sqrt'):
+def select_features_by_explained_variance(X, variance_threshold=0.90, n_components=200, weighting='sqrt'):
     """
-    Select features based on their loadings across multiple principal components.
+    Select features based on their contributions until they explain a target percentage of variance.
     """    
     # Run PCA
-    n_components = min(n_components, min(X.shape))
+    # n_components = min(n_components, min(X.shape))
     pca = PCA(n_components=n_components)
     pca.fit(X)
     
@@ -44,19 +44,33 @@ def select_features_by_pc_loadings(X, n_features=500, n_components=1000, weighti
     else:
         weights = np.ones(len(pca.explained_variance_ratio_))
 
-    # Apply weights to all columns at once using broadcasting
+    # Apply weights
     weighted_loadings = loadings * weights
     
-    # Calculate importance across components
+    # Calculate importance
     importance = pd.DataFrame({
         'Feature': X.columns,
         'Importance': np.abs(weighted_loadings).sum(axis=1)
     }).sort_values('Importance', ascending=False)
     
-    # Select top features
-    selected_features = importance.head(n_features)['Feature'].tolist()
+    # Calculate cumulative importance
+    total_importance = importance['Importance'].sum()
+    importance['Relative_Importance'] = importance['Importance'] / total_importance
+    importance['Cumulative_Variance'] = importance['Relative_Importance'].cumsum()
     
-    # Calculate PC contributions to importance
+    # Select features until threshold is reached
+    selected_features_df = importance[importance['Cumulative_Variance'] <= variance_threshold]
+    
+    # Add one more feature to cross the threshold if needed
+    if len(selected_features_df) < len(importance) and selected_features_df['Cumulative_Variance'].iloc[-1] < variance_threshold:
+        selected_features_df = pd.concat([
+            selected_features_df, 
+            importance.iloc[len(selected_features_df):len(selected_features_df)+1]
+        ])
+    
+    selected_features = selected_features_df['Feature'].tolist()
+    
+    # Calculate PC contributions
     pc_contributions = pd.DataFrame(
         {f'PC{i+1}_contrib': np.abs(loadings[f'PC{i+1}']) * pca.explained_variance_ratio_[i] 
          for i in range(n_components)}
@@ -64,4 +78,6 @@ def select_features_by_pc_loadings(X, n_features=500, n_components=1000, weighti
     pc_contributions.index = X.columns
     pc_contributions['Total_importance'] = importance.set_index('Feature')['Importance']
     
-    return selected_features, pc_contributions.sort_values('Total_importance', ascending=False), pca
+    return selected_features, selected_features_df, pc_contributions.sort_values('Total_importance', ascending=False), pca
+
+

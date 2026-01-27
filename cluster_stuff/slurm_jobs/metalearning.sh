@@ -1,13 +1,13 @@
 #!/bin/sh
-#SBATCH --job-name="protonet_low_weight_decay" # Job name
+#SBATCH --job-name="metalearning3"
 #SBATCH --partition=general,insy,prb # Request partition.
-#SBATCH --qos=medium                # This is how you specify QoS
-#SBATCH --time=7:00:00            # Request run time (wall-clock). Default is 1 minute
+#SBATCH --qos=short                # This is how you specify QoS
+#SBATCH --time=4:00:00            # Request run time (wall-clock). Default is 1 minute
 #SBATCH --nodes=1                 # Request 1 node
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1       # Set one task per node
-#SBATCH --cpus-per-task=8         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
-#SBATCH --mem=8GB                  # Request ... GB of RAM in total
+#SBATCH --cpus-per-task=4         # Request number of CPUs (threads) per task. Be mindful of #CV splits and max_concurrent argument value given to ray in code
+#SBATCH --mem-per-cpu=4GB                  # Request ... GB of RAM in total
 #SBATCH --gres=gpu:1              # Request 1 GPU
 #SBATCH --mail-type=FAIL
 
@@ -86,12 +86,10 @@ srun apptainer exec \
     --splitting_method="${SPLITTING_METHOD}" \
     --abundance_file="mpa4_species_profile_preprocessed.csv" \
     --metadata_file="sample_group_species_preprocessed.csv" \
-    --project="protonet_low_weight_decay" \
+    --project="metalearning2" \
     --extra_str_indicator="" \
-    --new_primary=True \
-    --new_copied_run=False
-    # --eval_k_shot 50
-    # --feature_reduction_alg="" \
+    --new_primary=True
+    # --feature_reduction_alg="PCA"
     # --resume=True \
     # --wait_for_warmup=True \
 

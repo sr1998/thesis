@@ -317,7 +317,7 @@ def protonet_search_space_sampler(optuna_trial):
 
     model__layer_sizes = []
     for i in range(model__num_layers):
-        model__layer_sizes.append(optuna_trial.suggest_int(f"model__layer_{i}_size", 60, 300, step=60))
+        model__layer_sizes.append(optuna_trial.suggest_int(f"model__layer_{i}_size", 1, 301, step=30))
 
     # Model configuration parameters
     # model__dropout_rate = optuna_trial.suggest_float("model__dropout_rate", 0.0, 0.7)
@@ -338,7 +338,7 @@ def protonet_search_space_sampler(optuna_trial):
     early_stopping_patience = optuna_trial.suggest_int("early_stopping_patience", 0, 50, step=2)
     # early_stopping_fraction = optuna_trial.suggest_float("early_stopping_fraction", 0.0, 0.4, step=0.1)
 
-    jitter_fraction = optuna_trial.suggest_float("jitter_fraction", 0.0, 0.5, step=0.1)
+    # jitter_fraction = optuna_trial.suggest_float("jitter_fraction", 0.0, 0.5, step=0.1)
 
 
     return {
@@ -358,6 +358,7 @@ def protonet_search_space_sampler(optuna_trial):
         "feature_reduction_n_components": 0,
         "early_stopping_patience": early_stopping_patience,
         "early_stopping_fraction": 0.2,
-        "jitter_fraction": jitter_fraction,
+        "jitter_fraction": 0.0,
     }
+
 
